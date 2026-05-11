@@ -3,7 +3,7 @@
 """
 =============================================================================
   comet_tail_analyzer.py  —  Finson–Probstein Dust Tail Model
-  Version 2.2   ·   Teerasak Thaluang (SSTAC, MPC O51/O58)
+  Version 2.3   ·   Teerasak Thaluang (MPC O51/O58)
 =============================================================================
   Changelog (v2.2):
     [BUG FIX] Increased default n_pts from 80 → 200 to fix syndyne gaps
@@ -46,7 +46,7 @@
 
 from __future__ import annotations
 
-__version__ = "2.2"
+__version__ = "2.3"
 
 import argparse
 import os
@@ -82,10 +82,7 @@ COMET_DB = {
     # ── Great / recent naked-eye comets ──────────────────────────────────────
     "C/2025 R3 (PANSTARRS)": dict(
         q=0.430, e=0.99980, i=128.00, Omega=27.00, omega=171.00, T="2026-04-21",
-        obs="2026-04-07",
-        note="★ YOUR FITS IMAGE · SSTAC MPC-O58 Pak Chong · "
-             "Fitted from: RA=344.62° Dec=+19.82° r☉=0.576 Δ=1.007 AU · "
-             "⚠ Fetch from Horizons for precise elements"),
+        obs="2026-04-07", note="Best comet of 2026"),
     "C/2023 A3 (Tsuchinshan-ATLAS)": dict(
         q=0.39112, e=1.00011, i=139.121, Omega=21.593, omega=308.474, T="2024-09-27",
         obs="2024-10-10", note="Spectacular Oct 2024 comet, mag ≈ −4 at elongation"),
@@ -851,7 +848,7 @@ def generate_dust_analysis(comet_el: dict, model_info: dict,
                     f" ρ=1 g/cm³).")
     lines.append(f"  {summary}")
     lines.append("")
-    lines.append("  [CometTailAnalyzer v2.0 · Thaluang/SSTAC · F-P 1968]")
+    lines.append("  [Comet Tail Analyzer by Teerasak Thaluang]")
     return "\n".join(lines)
 
 
