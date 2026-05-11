@@ -28,7 +28,7 @@ A professional desktop application for modelling cometary dust tails using the *
 | **Dust Analysis** | Afρ (A'Hearn 1984), grain-size estimates, Q_dust production rates |
 | **Grid Rotation** | Match model grid to observed tail direction; correct for uncertain ω/Ω |
 | **Astrometry Export** | Copy analysis text for MPC reports |
-| **Themes** | Dark (SSTAC-style) and Light modes — all panels fully themed |
+| **Themes** | Dark and Light modes — all panels fully themed |
 
 ---
 
