@@ -5,28 +5,25 @@
   comet_tail_analyzer.py  —  Finson–Probstein Dust Tail Model
   Version 2.3   ·   Teerasak Thaluang (MPC O51/O58)
 =============================================================================
-  Changelog (v2.2):
-    [BUG FIX] Increased default n_pts from 80 → 200 to fix syndyne gaps
-      for very small β (e.g., β=0.001). The previous sampling of 2.5 days
-      per point was too coarse for long debris trails, causing matplotlib
-      to clip segments that crossed domain boundaries. New sampling of
-      1 day per point produces continuous curves even for β < 0.01.
+  Changelog:
+    v2.3  • matplotlib.use() is now conditional on no backend being set,
+            preventing backend conflicts when imported by CometTailGUI.py.
+          • print() calls in fetch_comet() replaced with logging.info/debug
+            so GUI integration produces no unwanted console output.
+          • ax.spines[:] replaced with list(ax.spines.values()) for
+            matplotlib < 3.4 compatibility.
 
-  Changelog (v2.0):
-    • Removed ~1140 lines of dead code accumulated through 5 prior
-      iterations of fetch_from_cobs (only the latest implementation was
-      ever reachable; the rest was orphan code below an unconditional
-      `raise`).
-    • Removed orphan MPC-search snippet at the tail of generate_dust_analysis.
-    • Fixed source-label bug in fetch_from_cobs that always reported
-      "Horizons eph fit" even when the analytic fallback was used.
-    • Consolidated repeated ambiguous-target parsing into one helper
-      (_parse_ambiguous_record) and HTTP headers into one constant.
-    • Unified syndyne / synchrone drawing across standalone & overlay
-      modes via a shared _draw_curves helper inside CometTailVisualizer.
-    • Removed unused imports (solve_ivp, mpatches, matplotlib widgets).
-    • Numerical output is identical to v1.1 — verified bit-for-bit on
-      C/2020 F3 (NEOWISE) syndynes/synchrones.
+    v2.2  • Increased default n_pts 80 → 200 to fix syndyne gaps for very
+            small β (e.g., β=0.001). Prior 2.5 d/point sampling was too
+            coarse for long debris trails; 1 d/point is now the default.
+
+    v2.0  • Removed ~1140 lines of dead fetch_from_cobs implementations.
+          • Removed orphan MPC-search snippet in generate_dust_analysis.
+          • Fixed source-label bug always reporting "Horizons eph fit".
+          • Consolidated _parse_ambiguous_record helper and HTTP headers.
+          • Unified syndyne/synchrone drawing via shared _draw_curves helper.
+          • Removed unused imports (solve_ivp, mpatches, matplotlib widgets).
+          • Numerical output identical to v1.1 — verified on C/2020 F3.
 =============================================================================
   References:
     Finson & Probstein (1968a), ApJ 154, 327  — model & equations
@@ -49,6 +46,7 @@ from __future__ import annotations
 __version__ = "2.3"
 
 import argparse
+import logging
 import os
 import re
 import sys
@@ -59,7 +57,11 @@ from datetime import datetime, timezone
 import numpy as np
 
 import matplotlib
-matplotlib.use('TkAgg' if os.environ.get('DISPLAY') else 'Agg')
+# Only set the backend when no backend has been selected yet.
+# When imported by CometTailGUI.py, QtAgg is already active; this guard
+# prevents a backend-conflict warning and ensures the GUI renders correctly.
+if not matplotlib.get_backend():
+    matplotlib.use('TkAgg' if os.environ.get('DISPLAY') else 'Agg')
 import matplotlib.gridspec as gs
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -865,40 +867,40 @@ def fetch_comet(name_or_desig: str, date: str | None = None,
     # Local DB shortcut first
     for key, val in COMET_DB.items():
         if name_or_desig.lower() in key.lower():
-            print(f"  [DB] Found in local database: {key}")
+            logging.info("  [DB] Found in local database: %s", key)
             return {**val, 'T_jd': date_to_jd(val['T']), 'name': key, 'source': 'local DB'}
 
     is_periodic = bool(re.match(r'^\d+[PD]', name_or_desig.strip()))
 
-    print(f"  Fetching '{name_or_desig}' from {prefer.upper()}...")
+    logging.info("  Fetching '%s' from %s...", name_or_desig, prefer.upper())
     horizons_ex = mpc_ex = None
 
     if prefer in ('horizons', 'auto'):
         try:
             el = fetch_from_horizons(name_or_desig, date)
-            print(f"  [Horizons] q={el['q']:.5f} e={el['e']:.6f} i={el['i']:.3f}°")
+            logging.info("  [Horizons] q=%.5f e=%.6f i=%.3f°", el['q'], el['e'], el['i'])
             return el
         except Exception as ex:
             horizons_ex = ex
-            print(f"  [Horizons] Failed: {ex}")
+            logging.info("  [Horizons] Failed: %s", ex)
             if is_periodic:
-                print("  [Auto-fallback] Periodic comet — trying MPC...")
+                logging.info("  [Auto-fallback] Periodic comet — trying MPC...")
                 try:
                     el = fetch_from_mpc(name_or_desig)
-                    print(f"  [MPC] q={el['q']:.5f} e={el['e']:.6f}")
+                    logging.info("  [MPC] q=%.5f e=%.6f", el['q'], el['e'])
                     return el
                 except Exception as ex2:
                     mpc_ex = ex2
-                    print(f"  [MPC] Failed: {ex2}")
+                    logging.info("  [MPC] Failed: %s", ex2)
 
     if prefer in ('mpc', 'auto'):
         try:
             el = fetch_from_mpc(name_or_desig)
-            print(f"  [MPC] q={el['q']:.5f} e={el['e']:.6f}")
+            logging.info("  [MPC] q=%.5f e=%.6f", el['q'], el['e'])
             return el
         except Exception as ex:
             mpc_ex = ex
-            print(f"  [MPC] Failed: {ex}")
+            logging.info("  [MPC] Failed: %s", ex)
 
     hint = ""
     if is_periodic:
@@ -1480,7 +1482,8 @@ class CometTailVisualizer:
 
         ax.set_facecolor('#060b14')
         ax.tick_params(colors='#2a4060')
-        ax.spines[:].set_edgecolor('#1a2a40')
+        for sp in list(ax.spines.values()):
+            sp.set_edgecolor('#1a2a40')
         ax.set_xlabel('Δ East (AU)  →',  color='#3a6080',
                       fontsize=9, fontfamily='monospace')
         ax.set_ylabel('↑  Δ North (AU)', color='#3a6080',

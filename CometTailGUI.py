@@ -3,39 +3,32 @@
 """
 =============================================================================
   CometTailGUI.py  —  Finson–Probstein Comet Dust Tail Analyzer
-  Version 2.3   ·   Teerasak Thaluang (SSTAC, MPC O51/O58)
+  Version 2.3   ·   Teerasak Thaluang (MPC O51/O58)
   Native Desktop Application (PyQt6 + Matplotlib)
 =============================================================================
-  Changelog (v2.2):
-    • Pairs with comet_tail_analyzer.py v2.2 which fixes syndyne gaps for
-      very small β (e.g., β=0.001) by increasing sampling resolution from
-      80 → 200 points per syndyne.
-  
-  Changelog (v2.1) — CRITICAL PLATE-SCALE BUG FIXES:
-    [BUG FIX #1 — CRITICAL] Fixed WCS auto-override in _on_model_ready that
-      silently clobbered user's manual plate-scale edits on every Compute.
-      Now respects user input (ps_spin) with fallback to FITS WCS only when
-      user hasn't manually set a value.
-    
-    [BUG FIX #2] Reset _wcs_ps_deg = None when loading new image to prevent
-      stale FITS metadata from contaminating JPEG/PNG loads.
-    
-    [BUG FIX #3] Fixed CD matrix plate-scale calculation — now uses 
-      sqrt(|det(CD)|) instead of sqrt(cd12² + cd22²) for correct area element.
-    
-    [BUG FIX #4] Added auto-sync between ps_spin ↔ au_px_spin so changes
-      propagate immediately without requiring manual "Apply Plate Scale" click.
-    
-    [BUG FIX #5] Added _effective_plate_scale_arcsec() helper to provide
-      single source of truth for plate scale across all computations.
+  Changelog:
+    v2.3  • Pairs with comet_tail_analyzer.py v2.3.
+          • Fixed _effective_plate_scale_arcsec() to correctly delegate
+            to ControlPanel attributes (self.ctrl) instead of MainWindow.
+          • Fixed btn_compute QSS override: added setObjectName("btn_compute").
+          • Fixed LCWindow._draw(): added missing timedelta import.
+          • Removed dead imports: io, time, QSettings, QToolBar.
+          • Removed dead InfoPanel._update_cobs_label() method.
 
-  Changelog (v2.0):
-    • Pairs with comet_tail_analyzer.py v2.0 (drop-in compatible).
-    • Removed deprecated datetime.utcnow() call in the LCWindow
-      "now" marker (replaced with timezone-aware datetime.now(utc)).
-    • Removed duplicated 'RIGHT INFO PANEL' header comment block.
-    • Removed redundant `STYLE = ""` placeholder; STYLE is built
-      dynamically by `_build_style()`.
+    v2.2  • Pairs with comet_tail_analyzer.py v2.2 (syndyne gap fix for
+            small β by increasing n_pts 80 → 200).
+
+    v2.1  • Fixed WCS auto-override silently clobbering user plate-scale
+            edits on every Compute.
+          • Reset _wcs_ps_deg = None on new image load (stale metadata fix).
+          • Fixed CD matrix plate-scale: sqrt(|det(CD)|) instead of
+            sqrt(cd12² + cd22²).
+          • Added auto-sync ps_spin ↔ au_px_spin.
+          • Added _effective_plate_scale_arcsec() single source of truth.
+
+    v2.0  • Replaced deprecated datetime.utcnow() with timezone-aware
+            datetime.now(utc) in LCWindow "now" marker.
+          • STYLE built dynamically by _build_style(); removed placeholder.
 =============================================================================
   Run:
       python CometTailGUI.py
@@ -47,7 +40,7 @@
 
 __version__ = "2.3"
 
-import sys, os, warnings, io, csv, time
+import sys, os, warnings, csv
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -60,10 +53,10 @@ from PyQt6.QtWidgets import (
     QSplitter, QFileDialog, QStatusBar, QProgressBar, QMessageBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QTextEdit,
     QDialog, QDialogButtonBox, QFormLayout, QSizePolicy, QMenuBar,
-    QToolBar, QMenu,
+    QMenu,
 )
 from PyQt6.QtCore import (
-    Qt, QThread, pyqtSignal, QTimer, QSize, QSettings,
+    Qt, QThread, pyqtSignal, QTimer, QSize,
 )
 from PyQt6.QtGui import (
     QFont, QIcon, QColor, QPalette, QAction, QPixmap, QCursor,
@@ -1527,6 +1520,7 @@ class ControlPanel(QScrollArea):
 
         # ── Compute button ────────────────────────────────────────────────
         self.btn_compute = QPushButton("▶   COMPUTE MODEL")
+        self.btn_compute.setObjectName("btn_compute")
         self.btn_compute.setProperty("class", "primary")
         self.btn_compute.setMinimumHeight(40)
         self.btn_compute.clicked.connect(self._emit_compute)
@@ -1983,13 +1977,13 @@ class InfoPanel(QWidget):
         vbox.setContentsMargins(0, 0, 0, 0)
         vbox.setSpacing(0)
 
-        # Thin header strip
-        hdr = QLabel("  ANALYSIS")
-        hdr.setStyleSheet(
-            "background:#0b0e1c; color:#4a8090; font-size:10px;"
-            "letter-spacing:2px; font-weight:bold; padding:6px 8px;"
-            "border-bottom:1px solid #1a2540;")
-        vbox.addWidget(hdr)
+        # Thin header strip (stored so update_theme() can re-style it)
+        self.hdr = QLabel("  ANALYSIS")
+        self.hdr.setStyleSheet(
+            f"background:{T['panel_bg']}; color:{T['text_muted']}; font-size:10px;"
+            f"letter-spacing:2px; font-weight:bold; padding:6px 8px;"
+            f"border-bottom:1px solid {T['border']};")
+        vbox.addWidget(self.hdr)
 
         self.tabs = QTabWidget()
         vbox.addWidget(self.tabs)
@@ -2003,29 +1997,30 @@ class InfoPanel(QWidget):
         grp_eph = QGroupBox("EPHEMERIS")
         ge = QGridLayout(grp_eph); ge.setSpacing(5); ge.setColumnStretch(1,1)
         self.eph_labels = {}
+        self._eph_key_lbs = []
         for i,(k,tip) in enumerate([("r☉","heliocentric dist."),("Δ","geocentric dist."),
                 ("Phase","solar phase angle"),("RA","right ascension J2000"),
                 ("Dec","declination J2000"),("Date","observation (UT)")]):
             lk = QLabel(k); lk.setToolTip(tip)
-            lk.setStyleSheet("color:#7aA8c8; font-size:11px;")
-            lv = QLabel("—"); lv.setStyleSheet("color:#90d8ff; font-weight:bold; font-size:12px;")
-            lv.setWordWrap(True)
+            lv = QLabel("—"); lv.setWordWrap(True)
+            self._eph_key_lbs.append(lk)
             ge.addWidget(lk,i,0); ge.addWidget(lv,i,1); self.eph_labels[k] = lv
         v1.addWidget(grp_eph)
 
         grp_orb = QGroupBox("ORBITAL ELEMENTS")
         go = QGridLayout(grp_orb); go.setSpacing(5); go.setColumnStretch(1,1)
         self.orb_labels = {}
+        self._orb_key_lbs = []
         for i,(k,tip) in enumerate([("q","Perihelion dist. (AU)"),("e","Eccentricity"),
                 ("i","Inclination (°)"),("Ω","Long. ascending node (°)"),
                 ("ω","Arg. of perihelion (°)"),("T","Perihelion date"),("Source","Data source")]):
             lk = QLabel(k); lk.setToolTip(tip)
-            lk.setStyleSheet("color:#7aA8c8; font-size:11px;")
-            lv = QLabel("—"); lv.setStyleSheet("color:#90d8ff; font-weight:bold; font-size:11px;")
-            lv.setWordWrap(True)
+            lv = QLabel("—"); lv.setWordWrap(True)
+            self._orb_key_lbs.append(lk)
             go.addWidget(lk,i,0); go.addWidget(lv,i,1); self.orb_labels[k] = lv
         v1.addWidget(grp_orb)
         v1.addStretch()
+        self._apply_info_label_styles()   # initial colour pass
         self.tabs.addTab(sa1, "INFO")
 
         # ── Tab 2 : β TABLE ─────────────────────────────────────────────
@@ -2037,6 +2032,7 @@ class InfoPanel(QWidget):
         hdr_lbl = QLabel("Select β values that match the observed tail:")
         hdr_lbl.setStyleSheet(f"color:{T['text_muted']}; font-size:11px;")
         hdr_lbl.setWordWrap(True)
+        self._beta_hdr_lbl = hdr_lbl   # theme ref
         v2.addWidget(hdr_lbl)
 
         # Table: ✓ | β | Size | Effect
@@ -2062,6 +2058,7 @@ class InfoPanel(QWidget):
                       "Selected β → grain sizes used in Analysis report.")
         note.setStyleSheet(f"color:{T['text_muted']}; font-size:10px; padding:4px 0;")
         note.setWordWrap(True)
+        self._beta_note_lbl = note   # theme ref
         v2.addWidget(note)
         v2.addStretch()
         self.tabs.addTab(sa2, "β TABLE")
@@ -2091,9 +2088,11 @@ class InfoPanel(QWidget):
         res_grid = QGridLayout(res_grp); res_grid.setSpacing(6)
 
         lbl_h0 = QLabel("H₀"); lbl_h0.setStyleSheet(f"color:{T['text_muted']};font-size:11px;")
+        self._lbl_h0 = lbl_h0   # theme ref
         self.val_h0 = QLabel("—")
         self.val_h0.setStyleSheet(f"color:{T['text_value']};font-size:15px;font-weight:700;")
         lbl_n = QLabel("n"); lbl_n.setStyleSheet(f"color:{T['text_muted']};font-size:11px;")
+        self._lbl_n = lbl_n     # theme ref
         self.val_n = QLabel("—")
         self.val_n.setStyleSheet(f"color:{T['text_value']};font-size:15px;font-weight:700;")
         res_grid.addWidget(lbl_h0, 0, 0)
@@ -2136,9 +2135,7 @@ class InfoPanel(QWidget):
         # Analysis text output
         self.analysis_text = QTextEdit()
         self.analysis_text.setReadOnly(True)
-        self.analysis_text.setStyleSheet(
-            f"background:{T['input_bg']}; border:1px solid {T['border']};"
-            f"border-radius:6px; color:{T['text']}; font-size:10px;")
+        self._apply_analysis_text_style()   # sets bg/border/color from T
         self.analysis_text.setPlaceholderText(
             "Compute model first, then click\n'GENERATE ANALYSIS'")
         v5.addWidget(self.analysis_text)
@@ -2149,28 +2146,6 @@ class InfoPanel(QWidget):
         v5.addWidget(self.btn_copy_analysis)
         self.tabs.addTab(w5, "ANALYSIS")
 
-
-    def _update_cobs_label(self, cobs_data: dict, obs_list: list):
-        """Update the summary label below the light curve plot."""
-        parts = []
-        H0s = cobs_data.get("H0_stored"); ns = cobs_data.get("n_stored")
-        H0f = cobs_data.get("H0_fit");   nf = cobs_data.get("n_fit")
-        H0  = cobs_data.get("H0");       n  = cobs_data.get("n")
-
-        if H0s is not None:
-            parts.append(f"H₀ = {H0s:.2f}  n = {ns:.2f}  [COBS stored]")
-        if H0f is not None and obs_list:
-            n_pts = cobs_data.get("n_fit_pts", len(obs_list))
-            r_max = cobs_data.get("r_max_fit", 3.5)
-            parts.append(f"H₀ = {H0f:.2f}  n = {nf:.2f}  "
-                         f"[fitted {n_pts} pts r<{r_max:.1f} AU]")
-        if obs_list:
-            parts.append(f"{len(obs_list)} COBS observations loaded")
-        if cobs_data.get("last_mag"):
-            parts.append(f"Latest: m={cobs_data['last_mag']:.1f}"
-                         f"  ({cobs_data['last_date']})")
-        parts.append(f"Source: {cobs_data.get('source','')}")
-        self.cobs_lbl.setText("\n".join(parts) if parts else "No data")
 
     def _copy_analysis(self):
         from PyQt6.QtWidgets import QApplication
@@ -2237,6 +2212,59 @@ class InfoPanel(QWidget):
                     sel.append(b)
                 except Exception: pass
         return sel or getattr(self, '_betas', [])   # fallback: all betas
+
+    # ── Theme helpers ──────────────────────────────────────────────────────
+    def _apply_analysis_text_style(self):
+        """Re-apply the analysis QTextEdit colours from the active theme."""
+        self.analysis_text.setStyleSheet(
+            f"background:{T['input_bg']}; border:1px solid {T['border']};"
+            f"border-radius:6px; color:{T['text']}; font-size:10px;")
+
+    def _apply_info_label_styles(self):
+        """Re-apply eph / orb key-value label colours from the active theme."""
+        for lk in getattr(self, '_eph_key_lbs', []):
+            lk.setStyleSheet(f"color:{T['text_muted']}; font-size:11px;")
+        for lv in self.eph_labels.values():
+            lv.setStyleSheet(f"color:{T['text_value']}; font-weight:bold; font-size:12px;")
+        for lk in getattr(self, '_orb_key_lbs', []):
+            lk.setStyleSheet(f"color:{T['text_muted']}; font-size:11px;")
+        for lv in self.orb_labels.values():
+            lv.setStyleSheet(f"color:{T['text_value']}; font-weight:bold; font-size:11px;")
+
+    def _apply_misc_label_styles(self):
+        """Re-apply β TABLE, LC, and header strip colours from the active theme."""
+        # Header strip
+        self.hdr.setStyleSheet(
+            f"background:{T['panel_bg']}; color:{T['text_muted']}; font-size:10px;"
+            f"letter-spacing:2px; font-weight:bold; padding:6px 8px;"
+            f"border-bottom:1px solid {T['border']};")
+        # β TABLE labels
+        if hasattr(self, '_beta_hdr_lbl'):
+            self._beta_hdr_lbl.setStyleSheet(
+                f"color:{T['text_muted']}; font-size:11px;")
+        if hasattr(self, '_beta_note_lbl'):
+            self._beta_note_lbl.setStyleSheet(
+                f"color:{T['text_muted']}; font-size:10px; padding:4px 0;")
+        # LIGHT CURVE tab labels
+        if hasattr(self, '_lbl_h0'):
+            self._lbl_h0.setStyleSheet(f"color:{T['text_muted']}; font-size:11px;")
+        if hasattr(self, '_lbl_n'):
+            self._lbl_n.setStyleSheet(f"color:{T['text_muted']}; font-size:11px;")
+        if hasattr(self, 'val_h0'):
+            self.val_h0.setStyleSheet(
+                f"color:{T['text_value']}; font-size:15px; font-weight:700;")
+        if hasattr(self, 'val_n'):
+            self.val_n.setStyleSheet(
+                f"color:{T['text_value']}; font-size:15px; font-weight:700;")
+        if hasattr(self, 'cobs_lbl'):
+            self.cobs_lbl.setStyleSheet(
+                f"color:{T['text_muted']}; font-size:10px;")
+
+    def update_theme(self):
+        """Re-apply ALL theme-sensitive styles in the right panel."""
+        self._apply_analysis_text_style()
+        self._apply_info_label_styles()
+        self._apply_misc_label_styles()
 
 
 
@@ -2597,7 +2625,7 @@ class LCWindow(QDialog):
 
     def _draw(self, d, obs_r, obs_delta):
         import numpy as np
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
 
         ax = self._ax
         ax.set_facecolor(T["mpl_bg"])
@@ -2847,10 +2875,23 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Data",
                 "Fetch COBS light curve first."); return
         try:
-            info = self._model["info"] if self._model else {}
+            # Compute today's actual r_helio and delta from orbital elements.
+            # info.r_helio / r_geo are for the *model obs date*, not today,
+            # so using them gives a wrong "Now" magnitude on the light curve.
+            import numpy as np
+            r_now = None; delta_now = None
+            if getattr(self, '_comet_el', None):
+                today      = cta.today_jd()
+                r_C, _     = cta.elem_to_state(self._comet_el, today)
+                r_E        = cta.earth_pos(today)
+                r_now      = float(np.linalg.norm(r_C))
+                delta_now  = float(np.linalg.norm(r_C - r_E))
+            else:
+                info       = self._model["info"] if self._model else {}
+                r_now      = info.get("r_helio")
+                delta_now  = info.get("r_geo")
             # Store reference — prevents garbage collection crash
-            self._lc_win = LCWindow(
-                d, info.get("r_helio"), info.get("r_geo"), parent=None)
+            self._lc_win = LCWindow(d, r_now, delta_now, parent=None)
             self._lc_win.show()
             self._lc_win.raise_()
             self._lc_win.activateWindow()
@@ -2921,6 +2962,7 @@ class MainWindow(QMainWindow):
         self.info.analysis_text.setPlainText(txt)
         self.info.tabs.setCurrentIndex(3)
         self.status.showMessage(f"Analysis: {len(selected)} β selected", 2500)
+
     def _set_theme(self, theme_name: str):
         """Switch between dark and light themes."""
         app = QApplication.instance()
@@ -2954,6 +2996,9 @@ class MainWindow(QMainWindow):
             self._act_dark.setChecked(is_dark)
             self._act_light.setChecked(not is_dark)
 
+        # Re-apply all hardcoded styles in the right info panel
+        self.info.update_theme()
+
         # Redraw model if present
         if self._model:
             ov = self.ctrl.get_overlay()
@@ -2962,6 +3007,7 @@ class MainWindow(QMainWindow):
 
         self.status.showMessage(
             f"Theme: {'Dark ☾' if is_dark else 'Light ☀'}", 2500)
+
     def _on_compute(self, comet_el, obs_jd, betas, ages, max_age, n_pts):
         self._comet_el = comet_el
         vis = self.ctrl.get_vis()
@@ -3116,25 +3162,25 @@ class MainWindow(QMainWindow):
 
     def _effective_plate_scale_arcsec(self):
         """
-        Return effective plate scale in arcsec/px with fallback priority:
-          1. User's manual setting in ps_spin (if dialog exists and value set)
-          2. FITS WCS _wcs_ps_deg (if available)
-          3. None (no plate scale info available)
-        
-        This ensures user's manual edits always take precedence over WCS.
+        Return the effective plate scale in arcsec/px with priority:
+          1. User's manual entry in the Image Setup dialog ps_spin
+          2. FITS WCS-derived _wcs_ps_deg (if a FITS was loaded)
+          3. None (no plate scale available)
+
+        Both attributes live on ControlPanel (self.ctrl), not MainWindow.
         """
-        # Priority 1: Check if image dialog exists and user has set ps_spin
-        if hasattr(self, '_img_dialog') and self._img_dialog is not None:
-            ps_arcsec = self._img_dialog.ps_spin.value()
-            # If user has manually changed from default (non-zero value), use it
+        ctrl = self.ctrl
+
+        # Priority 1: Image Setup dialog — user's manually entered value
+        if hasattr(ctrl, '_img_dialog') and ctrl._img_dialog is not None:
+            ps_arcsec = ctrl._img_dialog.ps_spin.value()
             if ps_arcsec > 0:
                 return ps_arcsec
-        
-        # Priority 2: Fallback to FITS WCS if available
-        if hasattr(self, '_wcs_ps_deg') and self._wcs_ps_deg is not None:
-            return self._wcs_ps_deg * 3600.0  # deg → arcsec
-        
-        # Priority 3: No plate scale available
+
+        # Priority 2: FITS WCS header (auto-populated on FITS load)
+        if hasattr(ctrl, '_wcs_ps_deg') and ctrl._wcs_ps_deg is not None:
+            return ctrl._wcs_ps_deg * 3600.0  # deg/px → arcsec/px
+
         return None
 
     def _on_compute_error(self, msg):
