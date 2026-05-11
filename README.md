@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yourusername/comet-tail-analyzer/releases"><img src="https://img.shields.io/github/v/release/yourusername/comet-tail-analyzer?color=4a8090&label=version" alt="Version"></a>
+  <a href="https://github.com/MPC-O58/Comet-Tail-Analyzer/releases/tag/v2.3"><img src="https://img.shields.io/github/v/release/MPC-O58/Comet-Tail-Analyzer?color=4a8090&label=version" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/PyQt6-6.4%2B-green.svg" alt="PyQt6">
