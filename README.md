@@ -36,8 +36,8 @@ A professional desktop application for modelling cometary dust tails using the *
 
 <table>
   <tr>
-    <td><img src="docs/screenshot_dark.png" width="400" alt="Dark mode"/><br><sub>Dark mode — Finson–Probstein grid </sub></td>
-    <td><img src="docs/screenshot_light.png" width="400" alt="Light mode"/><br><sub>Light mode — image overlay </sub></td>
+    <td><img src="docs/screenshot_dark_FP.png" width="400" alt="Dark mode"/><br><sub>Dark mode — Finson–Probstein grid </sub></td>
+    <td><img src="docs/screenshot_dark.png" width="400" alt="Light mode"/><br><sub>Light mode — image overlay </sub></td>
   </tr>
   <tr>
     <td><img src="docs/screenshot_lc.png" width="400" alt="Light Curve"/><br><sub>Light curve — C/2023 A3 (Tsuchinshan-ATLAS), 2813 COBS obs</sub></td>
