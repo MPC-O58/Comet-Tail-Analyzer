@@ -1,3 +1,9 @@
+<div align="right">
+  <a href="https://doi.org/10.5281/zenodo.20126654">
+    <img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20126654.svg" alt="DOI">
+  </a>
+</div>
+
 # ☄ Comet Tail Analyzer — Finson–Probstein Model
 
 <p align="center">
