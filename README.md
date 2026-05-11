@@ -195,16 +195,6 @@ python comet_tail_analyzer.py --image photo.jpg
 
 ---
 
-## 🤝 Contributing
-
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
-
-- **Bug reports** → [GitHub Issues](https://github.com/yourusername/comet-tail-analyzer/issues)
-- **Feature requests** → [GitHub Discussions](https://github.com/yourusername/comet-tail-analyzer/discussions)
-- **Orbital elements updates** → PRs to `COMET_DB` in `comet_tail_analyzer.py`
-
----
-
 ## 📜 License
 
 This project is released under the **MIT License** — see [LICENSE](LICENSE) for details.
@@ -216,6 +206,7 @@ This project is released under the **MIT License** — see [LICENSE](LICENSE) fo
 **Teerasak Thaluang**  
 MPC Station Code: **O51** · **O58**  
 Comet and Asteroid Observer · SSTAC  
+This project utilized **Claude** (by Anthropic) as an AI coding assistant to aid in code generation, GUI implementation (PyQt6), and refactoring.
 
 ---
 
