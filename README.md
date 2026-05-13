@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://doi.org/10.5281/zenodo.20126654"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20126654.svg" alt="DOI"></a>
+  <a href="https://doi.org/10.5281/zenodo.20126653"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20126653.svg" alt="DOI"></a>
   <a href="https://github.com/MPC-O58/Comet-Tail-Analyzer/releases/latest"><img src="https://img.shields.io/github/v/release/MPC-O58/Comet-Tail-Analyzer"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python 3.9+">
