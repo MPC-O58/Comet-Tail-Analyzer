@@ -1,17 +1,12 @@
-<div align="right">
-  <a href="https://doi.org/10.5281/zenodo.20126654">
-    <img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20126654.svg" alt="DOI">
-  </a>
-</div>
 
 # ☄ Comet Tail Analyzer — Finson–Probstein Model
-
 <p align="center">
   <img src="docs/screenshot_dark.png" alt="Comet Tail Analyzer — dark mode" width="800"/>
 </p>
 
 <p align="center">
-  <a href="https://github.com/MPC-O58/Comet-Tail-Analyzer/releases/tag/v2.4"><img src="https://img.shields.io/github/v/release/MPC-O58/Comet-Tail-Analyzer?color=4a8090&label=version" alt="Version"></a>
+  <a href="https://doi.org/10.5281/zenodo.20126654"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20126654.svg" alt="DOI"></a>
+  <a href="https://github.com/MPC-O58/Comet-Tail-Analyzer/releases/latest"><img src="https://img.shields.io/github/v/release/MPC-O58/Comet-Tail-Analyzer"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/PyQt6-6.4%2B-green.svg" alt="PyQt6">
