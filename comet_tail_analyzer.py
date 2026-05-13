@@ -3,26 +3,35 @@
 """
 =============================================================================
   comet_tail_analyzer.py  —  Finson–Probstein Dust Tail Model
-  Version 2.3   ·   Teerasak Thaluang (MPC O51/O58)
+  Version 2.4   ·   Teerasak Thaluang (MPC O51/O58)
 =============================================================================
   Changelog:
+    v2.4  • COMET_DB redesigned: orbital elements removed entirely.  The
+            catalogue now stores only preferred observation date (obs) and
+            editorial note.  Elements are always fetched live from JPL
+            Horizons, eliminating stale/incorrect local elements.
+          • C/2016 R2 (PanSTARRS) corrected: Omega 325.015°→80.569°,
+            omega 5.538°→33.192° (previous values from preliminary MPC orbit).
+          • _normalize_comet_desig: strips discoverer parenthetical suffix
+            before querying Horizons ("C/2016 R2 (PanSTARRS)"→"C/2016 R2").
+            Previously all long-period PRESET comets returned 403/no-result.
+          • date_to_jd accepts decimal-day notation (2018-01-14.583),
+            HH:MM, and HH:MM:SS in addition to plain YYYY-MM-DD.
+          • jd_to_str outputs decimal-day format (2018-01-14.5830 UT).
+          • MPC fetch removed from GUI source selector (MPC API returns
+            HTTP 403; JPL Horizons is the sole source).
+          • fetch_comet: simplified to Horizons-only; prefer parameter and
+            MPC fallback path removed entirely.
+          • --prefer CLI argument removed (was redundant; Horizons is sole source).
     v2.3  • matplotlib.use() is now conditional on no backend being set,
             preventing backend conflicts when imported by CometTailGUI.py.
-          • print() calls in fetch_comet() replaced with logging.info/debug
-            so GUI integration produces no unwanted console output.
+          • print() calls in fetch_comet() replaced with logging.info/debug.
           • ax.spines[:] replaced with list(ax.spines.values()) for
             matplotlib < 3.4 compatibility.
 
-    v2.2  • Increased default n_pts 80 → 200 to fix syndyne gaps for very
-            small β (e.g., β=0.001). Prior 2.5 d/point sampling was too
-            coarse for long debris trails; 1 d/point is now the default.
+    v2.2  • Increased default n_pts 80→200 to fix syndyne gaps for small β.
 
-    v2.0  • Removed ~1140 lines of dead fetch_from_cobs implementations.
-          • Removed orphan MPC-search snippet in generate_dust_analysis.
-          • Fixed source-label bug always reporting "Horizons eph fit".
-          • Consolidated _parse_ambiguous_record helper and HTTP headers.
-          • Unified syndyne/synchrone drawing via shared _draw_curves helper.
-          • Removed unused imports (solve_ivp, mpatches, matplotlib widgets).
+    v2.0  • Major cleanup: removed ~1140 lines of dead code.
           • Numerical output identical to v1.1 — verified on C/2020 F3.
 =============================================================================
   References:
@@ -36,14 +45,14 @@
   Quick start:
     python comet_tail_analyzer.py                                     # interactive
     python comet_tail_analyzer.py --comet "C/2020 F3 (NEOWISE)" --date 2020-07-23
-    python comet_tail_analyzer.py --fetch "C/2023 A3"                 # fetch + plot
+    python comet_tail_analyzer.py --fetch "C/2023 A3" --date 2024-10-10
     python comet_tail_analyzer.py --image photo.jpg                   # overlay mode
 =============================================================================
 """
 
 from __future__ import annotations
 
-__version__ = "2.3"
+__version__ = "2.4"
 
 import argparse
 import logging
@@ -80,144 +89,126 @@ C_PR = 1.19e-3                  # Burns radiation pressure coeff (kg m⁻²)
 #  COMET DATABASE  (30+ objects)
 #  All elements: q(AU), e, i(°), Omega(°), omega(°), T(YYYY-MM-DD UT)
 # ─────────────────────────────────────────────────────────────────────────────
+
+# COMET_DB is a curated catalogue of interesting/historical comets.
+# It stores ONLY editorial metadata:
+#   obs  — the preferred observation date (peak brightness, best geometry, or
+#           scientifically notable moment) — pre-filled as the default date
+#           when the user picks this comet from the PRESET list.
+#   note — short human-readable description shown in the GUI.
+#
+# Orbital elements are NOT stored here. They are always fetched live from
+# JPL Horizons so they are never stale or wrong.
+# The PRESET tab simply pre-fills the comet name + preferred date, then
+# triggers the same Horizons fetch as the FETCH JPL tab.
 COMET_DB = {
     # ── Great / recent naked-eye comets ──────────────────────────────────────
-    "C/2025 R3 (PANSTARRS)": dict(
-        q=0.430, e=0.99980, i=128.00, Omega=27.00, omega=171.00, T="2026-04-21",
-        obs="2026-04-07", note="Best comet of 2026"),
-    "C/2023 A3 (Tsuchinshan-ATLAS)": dict(
-        q=0.39112, e=1.00011, i=139.121, Omega=21.593, omega=308.474, T="2024-09-27",
-        obs="2024-10-10", note="Spectacular Oct 2024 comet, mag ≈ −4 at elongation"),
-    "C/2021 A1 (Leonard)": dict(
-        q=0.61524, e=0.99953, i=132.687, Omega=310.474, omega=54.866,  T="2022-01-03",
-        obs="2021-12-15", note="Best naked-eye comet of 2021"),
-    "C/2020 F3 (NEOWISE)": dict(
-        q=0.29460, e=0.99922, i=128.938, Omega=61.021,  omega=37.281,  T="2020-07-03",
-        obs="2020-07-23", note="Spectacular naked-eye comet, July 2020"),
-    "C/2022 E3 (ZTF)": dict(
-        q=1.11220, e=1.00035, i=109.165, Omega=302.810, omega=145.836, T="2023-01-12",
-        obs="2023-02-01", note="Green comet, Jan–Feb 2023, slightly hyperbolic"),
-    "C/2020 S3 (Erasmus)": dict(
-        q=0.35313, e=0.99916, i=19.916,  Omega=31.028,  omega=295.069, T="2020-12-13",
-        obs="2020-11-25", note="Southern-hemisphere comet, Nov 2020"),
-    "C/2019 Y4 (ATLAS)": dict(
-        q=0.25293, e=0.99978, i=45.381,  Omega=265.209, omega=343.887, T="2020-05-31",
-        obs="2020-04-06", note="Disintegrated before perihelion, Apr 2020"),
-    "C/2019 U6 (Lemmon)": dict(
-        q=0.87760, e=1.00060, i=60.521,  Omega=133.527, omega=51.007,  T="2020-06-18",
-        obs="2020-06-10", note="Southern comet, June 2020"),
-    "C/2018 Y1 (Iwamoto)": dict(
-        q=1.27764, e=0.99969, i=160.407, Omega=149.358, omega=358.124, T="2019-02-07",
-        obs="2019-02-12", note="Very close approach 0.28 AU from Earth"),
-    "C/2017 T2 (PanSTARRS)": dict(
-        q=1.61697, e=0.99946, i=54.879,  Omega=77.093,  omega=70.060,  T="2020-05-04",
-        obs="2020-05-01", note="Northern circumpolar in spring 2020"),
-    "C/2016 R2 (PanSTARRS)": dict(
-        q=2.60225, e=0.99985, i=58.218,  Omega=325.015, omega=5.538,   T="2018-05-09",
-        obs="2018-01-20", note="Blue comet — CO-dominated coma"),
-    "C/2015 V2 (Johnson)": dict(
-        q=1.63612, e=0.99925, i=49.878,  Omega=68.608,  omega=117.849, T="2017-06-12",
-        obs="2017-05-10", note="Northern spring 2017"),
-    "C/2015 ER61 (PanSTARRS)": dict(
-        q=1.04074, e=0.99982, i=5.582,   Omega=347.736, omega=301.538, T="2017-05-09",
-        obs="2017-04-15", note="Outburst April 2017"),
-    "C/2014 Q2 (Lovejoy)": dict(
-        q=1.29048, e=0.99784, i=80.302,  Omega=23.917,  omega=129.416, T="2015-01-30",
-        obs="2015-01-15", note="Naked-eye Jan 2015, alcohol detected"),
-    "C/2013 A1 (Siding Spring)": dict(
-        q=1.39904, e=1.00015, i=129.024, Omega=300.974, omega=2.435,   T="2014-10-25",
-        obs="2014-10-19", note="Passed 140,000 km from Mars"),
-    "C/2012 S1 (ISON)": dict(
-        q=0.01244, e=1.00002, i=62.147,  Omega=295.653, omega=345.508, T="2013-11-28",
-        obs="2013-11-15", note="Sungrazer — disintegrated at perihelion"),
-    "C/2011 L4 (PanSTARRS)": dict(
-        q=0.30160, e=1.00004, i=84.190,  Omega=65.630,  omega=333.750, T="2013-03-10",
-        obs="2013-03-20", note="Bright southern comet, early 2013"),
-    "C/2009 P1 (Garradd)": dict(
-        q=1.55042, e=0.99985, i=106.176, Omega=106.181, omega=90.097,  T="2011-12-23",
-        obs="2012-02-10", note="Displayed both gas and dust tails simultaneously"),
-    "C/2007 N3 (Lulin)": dict(
-        q=1.21237, e=0.99998, i=178.374, Omega=338.529, omega=136.085, T="2009-01-10",
-        obs="2009-02-24", note="Retrograde near-parabolic, dual opposing tails"),
-    "C/2006 P1 (McNaught)": dict(
-        q=0.17070, e=1.00002, i=77.840,  Omega=267.410, omega=155.970, T="2007-01-12",
-        obs="2007-01-14", note="Brightest since 1965, mag ≈ −5.5, striated tail"),
-    "C/2001 Q4 (NEAT)": dict(
-        q=0.96183, e=1.00001, i=99.639,  Omega=210.278, omega=1.224,   T="2004-05-15",
-        obs="2004-05-07", note="Northern naked-eye May 2004"),
-    "C/1999 T1 (McNaught-Hartley)": dict(
-        q=1.27255, e=0.99975, i=80.473,  Omega=26.267,  omega=206.070, T="2001-12-12",
-        obs="2001-11-20", note="Long-period, good dust tail"),
+    "C/2025 R3 (PANSTARRS)":            dict(obs="2026-04-07", note="Best comet of 2026"),
+    "C/2023 A3 (Tsuchinshan-ATLAS)":    dict(obs="2024-10-10", note="Spectacular Oct 2024 comet, mag ≈ −4 at elongation"),
+    "C/2021 A1 (Leonard)":              dict(obs="2021-12-15", note="Best naked-eye comet of 2021"),
+    "C/2020 F3 (NEOWISE)":              dict(obs="2020-07-23", note="Spectacular naked-eye comet, July 2020"),
+    "C/2022 E3 (ZTF)":                  dict(obs="2023-02-01", note="Green comet, Jan–Feb 2023, slightly hyperbolic"),
+    "C/2020 S3 (Erasmus)":              dict(obs="2020-11-25", note="Southern-hemisphere comet, Nov 2020"),
+    "C/2019 Y4 (ATLAS)":                dict(obs="2020-04-06", note="Disintegrated before perihelion, Apr 2020"),
+    "C/2019 U6 (Lemmon)":               dict(obs="2020-06-10", note="Southern comet, June 2020"),
+    "C/2018 Y1 (Iwamoto)":              dict(obs="2019-02-12", note="Very close approach 0.28 AU from Earth"),
+    "C/2017 T2 (PanSTARRS)":            dict(obs="2020-05-01", note="Northern circumpolar in spring 2020"),
+    "C/2016 R2 (PanSTARRS)":            dict(obs="2018-01-14", note="Blue comet — CO-dominated coma, unusual spectrum"),
+    "C/2015 V2 (Johnson)":              dict(obs="2017-05-10", note="Northern spring 2017"),
+    "C/2015 ER61 (PanSTARRS)":          dict(obs="2017-04-15", note="Outburst April 2017"),
+    "C/2014 Q2 (Lovejoy)":              dict(obs="2015-01-15", note="Naked-eye Jan 2015, alcohol detected"),
+    "C/2013 A1 (Siding Spring)":        dict(obs="2014-10-19", note="Passed 140,000 km from Mars"),
+    "C/2012 S1 (ISON)":                 dict(obs="2013-11-15", note="Sungrazer — disintegrated at perihelion"),
+    "C/2011 L4 (PanSTARRS)":            dict(obs="2013-03-20", note="Bright southern comet, early 2013"),
+    "C/2009 P1 (Garradd)":              dict(obs="2012-02-10", note="Displayed both gas and dust tails simultaneously"),
+    "C/2007 N3 (Lulin)":                dict(obs="2009-02-24", note="Retrograde near-parabolic, dual opposing tails"),
+    "C/2006 P1 (McNaught)":             dict(obs="2007-01-14", note="Brightest since 1965, mag ≈ −5.5, striated tail"),
+    "C/2001 Q4 (NEAT)":                 dict(obs="2004-05-07", note="Northern naked-eye May 2004"),
+    "C/1999 T1 (McNaught-Hartley)":     dict(obs="2001-11-20", note="Long-period, good dust tail"),
     # ── Classic / historical comets ──────────────────────────────────────────
-    "C/1995 O1 (Hale-Bopp)": dict(
-        q=0.91410, e=0.99510, i=89.430,  Omega=282.470, omega=130.590, T="1997-04-01",
-        obs="1997-04-10", note="Great Comet of 1997, visible 18 months"),
-    "C/1996 B2 (Hyakutake)": dict(
-        q=0.23023, e=0.99986, i=124.922, Omega=188.047, omega=130.179, T="1996-05-01",
-        obs="1996-03-25", note="Closest comet approach (0.102 AU) since 1770"),
-    "C/1993 A1 (Mueller)": dict(
-        q=4.37500, e=0.99983, i=118.240, Omega=153.800, omega=106.110, T="1994-01-06",
-        obs="1993-11-01", note="Distant comet, q > 4 AU"),
-    "C/1990 K1 (Levy)": dict(
-        q=0.93849, e=0.99862, i=130.020, Omega=271.765, omega=196.067, T="1990-10-24",
-        obs="1990-09-15", note="Best comet of 1990"),
-    "C/1975 V1 (West)": dict(
-        q=0.19697, e=1.00008, i=43.066,  Omega=118.095, omega=358.357, T="1976-02-25",
-        obs="1976-03-05", note="Fragmented nucleus, spectacular dust tail"),
-    "C/1956 R1 (Arend-Roland)": dict(
-        q=0.31607, e=0.99974, i=119.950, Omega=321.490, omega=28.110,  T="1957-04-08",
-        obs="1957-04-25", note="Original F-P test case — famous anti-tail"),
+    "C/1995 O1 (Hale-Bopp)":            dict(obs="1997-04-10", note="Great Comet of 1997, visible 18 months"),
+    "C/1996 B2 (Hyakutake)":            dict(obs="1996-03-25", note="Closest comet approach (0.102 AU) since 1770"),
+    "C/1993 A1 (Mueller)":              dict(obs="1993-11-01", note="Distant comet, q > 4 AU"),
+    "C/1990 K1 (Levy)":                 dict(obs="1990-09-15", note="Best comet of 1990"),
+    "C/1975 V1 (West)":                 dict(obs="1976-03-05", note="Fragmented nucleus, spectacular dust tail"),
+    "C/1956 R1 (Arend-Roland)":         dict(obs="1957-04-25", note="Original F-P test case — famous anti-tail"),
     # ── Periodic comets ──────────────────────────────────────────────────────
-    "1P/Halley": dict(
-        q=0.58600, e=0.96714, i=162.262, Omega=58.860,  omega=111.330, T="1986-02-09",
-        obs="1986-03-15", note="Most famous periodic, P≈76yr"),
-    "2P/Encke": dict(
-        q=0.33370, e=0.84820, i=11.780,  Omega=334.570, omega=186.550, T="2003-12-29",
-        obs="2004-01-15", note="Shortest known period P≈3.3yr"),
-    "17P/Holmes": dict(
-        q=2.05279, e=0.43257, i=19.113,  Omega=326.831, omega=24.352,  T="2007-05-05",
-        obs="2007-11-01", note="Dramatic million-fold outburst 2007"),
-    "81P/Wild 2": dict(
-        q=1.59154, e=0.53592, i=3.241,   Omega=136.080, omega=163.092, T="2003-09-26",
-        obs="2004-01-02", note="Stardust mission target"),
-    "67P/Churyumov-Gerasimenko": dict(
-        q=1.24313, e=0.64102, i=7.040,   Omega=50.147,  omega=12.777,  T="2015-08-13",
-        obs="2015-08-01", note="Rosetta/Philae mission — rubber-duck nucleus"),
-    "9P/Tempel 1": dict(
-        q=1.50617, e=0.51737, i=10.530,  Omega=68.938,  omega=178.839, T="2005-07-05",
-        obs="2005-07-04", note="Deep Impact mission target"),
+    "1P/Halley":                         dict(obs="1986-03-15", note="Most famous periodic, P≈76yr"),
+    "2P/Encke":                          dict(obs="2004-01-15", note="Shortest known period P≈3.3yr"),
+    "17P/Holmes":                        dict(obs="2007-11-01", note="Dramatic million-fold outburst 2007"),
+    "81P/Wild 2":                        dict(obs="2004-01-02", note="Stardust mission target"),
+    "67P/Churyumov-Gerasimenko":         dict(obs="2015-08-01", note="Rosetta/Philae mission — rubber-duck nucleus"),
+    "9P/Tempel 1":                       dict(obs="2005-07-04", note="Deep Impact mission target"),
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  DATE / JD UTILITIES
 # ─────────────────────────────────────────────────────────────────────────────
-_DATE_RE = re.compile(r'(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s](\d{1,2})(?::(\d{2}))?)?')
+# Accepted date formats (all are converted to JD with full sub-day precision):
+#   YYYY-MM-DD              plain calendar date (midnight UT)
+#   YYYY-MM-DD.fff          decimal day  ← astronomical standard, e.g. 2018-01-14.583
+#   YYYY-MM-DDTHH:MM        ISO-8601 with T separator
+#   YYYY-MM-DD HH:MM        space separator
+#   YYYY-MM-DD HH:MM:SS     with seconds
+# The decimal-day and HH:MM forms are mutually exclusive; decimal day takes priority.
+_DATE_RE = re.compile(
+    r'(\d{4})-(\d{1,2})-(\d{1,2})'          # YYYY-MM-DD  (groups 1-3)
+    r'(?:'
+        r'(\.\d+)'                            # .fraction   (group 4)  — decimal day
+        r'|[T\s](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?'  # HH:MM[:SS] (groups 5-7)
+    r')?'
+)
 
 
 def date_to_jd(s: str) -> float:
-    """Convert 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM' to Julian Date (UTC)."""
+    """Convert a date string to Julian Date (UTC).
+
+    Accepted formats::
+        '2018-01-14'           → JD at 00:00 UT
+        '2018-01-14.583'       → JD at fractional day (astronomical notation)
+        '2018-01-14 13:55'     → JD at HH:MM UT
+        '2018-01-14T13:55'     → ISO-8601
+        '2018-01-14 13:55:12'  → HH:MM:SS UT
+    """
     m = _DATE_RE.match(s.strip())
     if not m:
-        raise ValueError(f"Cannot parse date: {s!r}")
-    y, mo, d = int(m[1]), int(m[2]), int(m[3])
-    h  = int(m[4]) if m[4] else 0
-    mn = int(m[5]) if m[5] else 0
+        raise ValueError(
+            f"Cannot parse date: {s!r}\n"
+            f"  Accepted: 'YYYY-MM-DD', 'YYYY-MM-DD.fff', 'YYYY-MM-DD HH:MM', "
+            f"'YYYY-MM-DD HH:MM:SS'"
+        )
+    y, mo = int(m[1]), int(m[2])
+    d_int = int(m[3])
+    if m[4]:                                  # decimal day, e.g. .583
+        day_frac = float(m[4])               # e.g. 0.583
+    elif m[5]:                                # HH:MM[:SS]
+        h  = int(m[5])
+        mn = int(m[6])
+        sc = float(m[7]) if m[7] else 0.0
+        day_frac = h / 24.0 + mn / 1440.0 + sc / 86400.0
+    else:
+        day_frac = 0.0
+
     if mo <= 2:
-        y -= 1
+        y  -= 1
         mo += 12
     A = y // 100
     B = 2 - A + A // 4
     return (int(365.25 * (y + 4716))
             + int(30.6001 * (mo + 1))
-            + d + B - 1524.5
-            + h / 24 + mn / 1440)
+            + d_int + B - 1524.5
+            + day_frac)
 
 
 def jd_to_str(jd: float) -> str:
-    """Convert JD to human-readable UTC string 'YYYY-MM-DD HH:MM UT'."""
+    """Convert JD to human-readable UTC string.
+
+    Returns 'YYYY-MM-DD.fff UT' (decimal day) when sub-day precision is
+    present, otherwise 'YYYY-MM-DD HH:MM UT'.
+    """
     J = jd + 0.5
     Z = int(J)
-    F = J - Z
+    F = J - Z            # day fraction (0 = midnight, 0.5 = noon)
     A = Z
     if Z >= 2299161:
         a = int((Z - 1867216.25) / 36524.25)
@@ -229,10 +220,12 @@ def jd_to_str(jd: float) -> str:
     day   = B - D - int(30.6001 * E)
     month = E - 1 if E < 14 else E - 13
     year  = C - 4716 if month > 2 else C - 4715
-    hrs   = F * 24
-    hh    = int(hrs)
-    mm    = min(59, round((hrs - hh) * 60))
-    return f"{year:04d}-{month:02d}-{day:02d} {hh:02d}:{mm:02d} UT"
+    if F < 1e-5:          # exactly midnight — plain date
+        return f"{year:04d}-{month:02d}-{day:02d} UT"
+    # Decimal-day notation: e.g. 2018-01-14.583 UT
+    # Round to 4 decimal places (≈ 8.6 s precision — sufficient for comets)
+    frac_str = f"{F:.4f}"[1:]   # e.g. ".5830"
+    return f"{year:04d}-{month:02d}-{day:02d}{frac_str} UT"
 
 
 def today_jd() -> float:
@@ -241,11 +234,11 @@ def today_jd() -> float:
     return date_to_jd(dt.strftime('%Y-%m-%d %H:%M'))
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  MPC / HORIZONS / COBS FETCHING
+#  JPL HORIZONS FETCHING
 # ─────────────────────────────────────────────────────────────────────────────
 
 _HTTP_HEADERS = {
-    "User-Agent": "CometTailAnalyzer/2.0",
+    "User-Agent": "CometTailAnalyzer/2.4",
     "Accept":     "application/json",
 }
 
@@ -255,14 +248,15 @@ def _normalize_comet_desig(designation: str):
     Return a list of (id_string, id_type) pairs to try with JPL Horizons.
 
     Horizons accepts periodic comets as:
-      - "88P"           with id_type='designation' (numeric SPKID lookup)
+      - "88P"           with id_type='designation'
       - "88P/Howell"    with id_type='comet_name'
-      - "Howell"        with id_type='comet_name'
-    Long-period comets:
-      - "C/2023 A3"     with id_type='designation'
-      - "C/2023 A3 ..." with id_type='comet_name'
+    Long-period comets MUST have the discoverer suffix stripped:
+      - "C/2023 A3"     with id_type='designation'   ← Horizons packed form
+      - "C/2016 R2 (PanSTARRS)" → strip → "C/2016 R2" before sending
 
-    The most reliable forms are tried first.
+    Horizons does NOT accept "(PanSTARRS)" / "(Hale-Bopp)" etc. as part of
+    a designation query — it will return no results.  The full string is kept
+    only as a comet_name fallback.
     """
     d = designation.strip()
     attempts: list[tuple[str, str | None]] = []
@@ -280,10 +274,19 @@ def _normalize_comet_desig(designation: str):
         else:
             attempts.append((d, 'comet_name'))
     else:
-        # Long-period / other: "C/2023 A3 ...", "P/...", "X/..."
-        attempts.append((d, 'designation'))
+        # Long-period / other: strip discoverer name in parentheses
+        # "C/2016 R2 (PanSTARRS)"         → "C/2016 R2"
+        # "C/2023 A3 (Tsuchinshan-ATLAS)" → "C/2023 A3"
+        # "C/2023 A3"                     → unchanged
+        clean = re.sub(r'\s*\([^)]*\)\s*$', '', d).strip()
+        if clean and clean != d:
+            attempts.append((clean, 'designation'))   # correct packed form — try first
+            attempts.append((clean, None))
+        attempts.append((d, 'designation'))           # original as fallback
         attempts.append((d, 'comet_name'))
         attempts.append((d, None))
+        if clean and clean != d:
+            attempts.append((clean, 'comet_name'))
 
     return attempts
 
@@ -356,68 +359,8 @@ def fetch_from_horizons(designation: str, date: str | None = None) -> dict:
         f"Last error: {last_exc}\n\n"
         f"Suggestions:\n"
         f"  • For periodic comets: try '88P/Howell' (include name after /)\n"
-        f"  • Switch Source to 'MPC' and retry\n"
         f"  • Check internet connection\n"
         f"  • Verify at: https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html"
-    )
-
-
-def fetch_from_mpc(designation: str) -> dict:
-    """
-    Fetch comet orbital elements from MPC via their JSON API.
-
-    Tries multiple name variants to avoid URL-encoding issues with periodic
-    comets (e.g. '88P/Howell' → also try '88P' and 'Howell').
-    """
-    import requests
-
-    url = "https://www.minorplanetcenter.net/search_comet_elements"
-
-    def _query(name_str: str):
-        r = requests.get(url,
-                         params={"name": name_str.strip(), "js": 1},
-                         headers=_HTTP_HEADERS, timeout=15)
-        r.raise_for_status()
-        return r.json()
-
-    # Build a list of name variants to try
-    variants = [designation]
-    d = designation.strip()
-    if '/' in d:
-        a, b = d.split('/', 1)
-        variants += [a.strip(), b.strip()]
-    elif re.match(r'^\d+[PD]$', d):
-        variants.append(re.match(r'^(\d+)', d).group(1))
-
-    last_ex: Exception | None = None
-    for name_str in variants:
-        try:
-            data = _query(name_str)
-            if not data:
-                continue
-            rec = data[0]
-            tp_str   = rec.get("Perihelion", "")
-            tp_parts = tp_str.strip().split()
-            tp_jd = None
-            if len(tp_parts) == 3:
-                tp_jd = date_to_jd(
-                    f"{tp_parts[0]}-{int(tp_parts[1]):02d}-{float(tp_parts[2]):05.2f}"[:10])
-            return dict(
-                q     = float(rec.get("Perihelion_dist", 1.0)),
-                e     = float(rec.get("e", 1.0)),
-                i     = float(rec.get("i", 0.0)),
-                Omega = float(rec.get("Node", 0.0)),
-                omega = float(rec.get("Peri", 0.0)),
-                T     = tp_str[:10] if tp_str else "2000-01-01",
-                T_jd  = tp_jd,
-                name  = rec.get("Designation_and_name", designation),
-                source= "MPC",
-            )
-        except Exception as ex:
-            last_ex = ex
-
-    raise RuntimeError(
-        f"MPC returned no results for: {designation!r}. Last error: {last_ex}"
     )
 
 
@@ -854,61 +797,42 @@ def generate_dust_analysis(comet_el: dict, model_info: dict,
     return "\n".join(lines)
 
 
-def fetch_comet(name_or_desig: str, date: str | None = None,
-                prefer: str = 'horizons') -> dict:
+def fetch_comet(name_or_desig: str, date: str | None = None) -> dict:
     """
-    High-level fetch: tries Horizons then MPC, with the local DB as a shortcut.
+    Fetch live orbital elements from JPL Horizons for any comet.
 
-    For periodic comets (NNP format), automatically falls back to MPC if
-    Horizons fails.
+    COMET_DB stores only editorial metadata (preferred date + note); there
+    is no local element cache that could return stale or incorrect data.
 
-    prefer: 'horizons' | 'mpc' | 'local'
+    Args:
+        name_or_desig: Any recognisable comet designation, e.g.:
+                       "C/2023 A3", "C/2023 A3 (Tsuchinshan-ATLAS)",
+                       "1P/Halley", "67P"
+        date:          Observation date string (any format accepted by
+                       date_to_jd).  Used to select the Horizons epoch.
+                       Defaults to today if omitted.
+
+    Returns:
+        dict with keys: q, e, i, Omega, omega, T, T_jd, name, source
+
+    Raises:
+        RuntimeError if Horizons cannot find the object.
     """
-    # Local DB shortcut first
-    for key, val in COMET_DB.items():
-        if name_or_desig.lower() in key.lower():
-            logging.info("  [DB] Found in local database: %s", key)
-            return {**val, 'T_jd': date_to_jd(val['T']), 'name': key, 'source': 'local DB'}
-
-    is_periodic = bool(re.match(r'^\d+[PD]', name_or_desig.strip()))
-
-    logging.info("  Fetching '%s' from %s...", name_or_desig, prefer.upper())
-    horizons_ex = mpc_ex = None
-
-    if prefer in ('horizons', 'auto'):
-        try:
-            el = fetch_from_horizons(name_or_desig, date)
-            logging.info("  [Horizons] q=%.5f e=%.6f i=%.3f°", el['q'], el['e'], el['i'])
-            return el
-        except Exception as ex:
-            horizons_ex = ex
-            logging.info("  [Horizons] Failed: %s", ex)
-            if is_periodic:
-                logging.info("  [Auto-fallback] Periodic comet — trying MPC...")
-                try:
-                    el = fetch_from_mpc(name_or_desig)
-                    logging.info("  [MPC] q=%.5f e=%.6f", el['q'], el['e'])
-                    return el
-                except Exception as ex2:
-                    mpc_ex = ex2
-                    logging.info("  [MPC] Failed: %s", ex2)
-
-    if prefer in ('mpc', 'auto'):
-        try:
-            el = fetch_from_mpc(name_or_desig)
-            logging.info("  [MPC] q=%.5f e=%.6f", el['q'], el['e'])
-            return el
-        except Exception as ex:
-            mpc_ex = ex
-            logging.info("  [MPC] Failed: %s", ex)
-
-    hint = ""
-    if is_periodic:
-        hint = (f"\n  Tip: For periodic comets, try including the name, e.g. "
-                f"'{name_or_desig.split('/')[0]}/Howell' or switch Source to MPC.")
-    raise RuntimeError(
-        f"Could not find orbital elements for: {name_or_desig!r}{hint}"
-    )
+    logging.info("  Fetching '%s' from JPL Horizons...", name_or_desig)
+    try:
+        el = fetch_from_horizons(name_or_desig, date)
+        logging.info("  [Horizons] q=%.5f e=%.6f i=%.3f°", el['q'], el['e'], el['i'])
+        return el
+    except Exception as ex:
+        is_periodic = bool(re.match(r'^\d+[PD]', name_or_desig.strip()))
+        hint = ""
+        if is_periodic:
+            hint = (f"\n  Tip: For periodic comets, try including the name, e.g. "
+                    f"'{name_or_desig.split('/')[0]}/Howell'")
+        raise RuntimeError(
+            f"Could not find orbital elements for: {name_or_desig!r}\n"
+            f"Horizons error: {ex}{hint}"
+        ) from ex
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1841,8 +1765,8 @@ Examples:
   python comet_tail_analyzer.py --comet "NEOWISE" --save output.png
   python comet_tail_analyzer.py --comet "Encke" --csv data.csv
         """)
-    p.add_argument('--comet',     type=str, help='Comet name (search local DB)')
-    p.add_argument('--fetch',     type=str, help='Fetch from Horizons/MPC by designation')
+    p.add_argument('--comet',     type=str, help='Comet name/designation — fetched from JPL Horizons')
+    p.add_argument('--fetch',     type=str, help='Fetch from JPL Horizons by designation')
     p.add_argument('--date',      type=str, help='Observation date YYYY-MM-DD [default: today]')
     p.add_argument('--beta',      type=str,
                    default=','.join(map(str, CometTailVisualizer.DEFAULT_BETAS)),
@@ -1859,10 +1783,7 @@ Examples:
     p.add_argument('--nuc-y',     type=float, help='Nucleus Y pixel in image')
     p.add_argument('--save',      type=str,   help='Save plot to PNG')
     p.add_argument('--csv',       type=str,   help='Export model points to CSV')
-    p.add_argument('--list',      action='store_true', help='List all comets in database')
-    p.add_argument('--prefer',    type=str,  default='horizons',
-                   choices=['horizons', 'mpc', 'local'],
-                   help='Preferred data source when fetching')
+    p.add_argument('--list',      action='store_true', help='List all comets in catalogue')
     return p.parse_args()
 
 
@@ -1872,17 +1793,17 @@ def interactive_menu():
     print("  COMET TAIL ANALYZER — Finson–Probstein Model")
     print("═" * 60)
     names = list(COMET_DB.keys())
-    print("\n  SELECT A COMET:\n")
+    print("\n  SELECT A COMET (orbital elements fetched live from Horizons):\n")
     for i, name in enumerate(names):
         note = COMET_DB[name].get('note', '')[:45]
-        print(f"  [{i+1:2d}] {name:<35}  {note}")
-    print("\n  [ 0] Fetch from Horizons/MPC (enter designation)\n")
-    choice = input("  Enter number (or 0 to fetch): ").strip()
+        pref = COMET_DB[name].get('obs', '')
+        print(f"  [{i+1:2d}] {name:<38} {pref}  {note}")
+    print("\n  [ 0] Enter any designation manually\n")
+    choice = input("  Enter number (or 0): ").strip()
 
     if choice == '0':
         desig = input("  Designation (e.g. C/2023 A3): ").strip()
         date  = input("  Obs date YYYY-MM-DD [Enter=today]: ").strip() or None
-        el    = fetch_comet(desig, date=date)
     else:
         try:
             idx = int(choice) - 1
@@ -1892,12 +1813,19 @@ def interactive_menu():
         if not (0 <= idx < len(names)):
             print("  Invalid selection.")
             sys.exit(1)
-        key  = names[idx]
-        el   = {**COMET_DB[key], 'name': key, 'T_jd': date_to_jd(COMET_DB[key]['T'])}
-        date = input(f"  Obs date [Enter={el.get('obs','')}]: ").strip() or el.get('obs', '')
+        key   = names[idx]
+        desig = key
+        pref  = COMET_DB[key].get('obs', '')
+        date  = input(f"  Obs date [Enter={pref}]: ").strip() or pref or None
+
+    print(f"\n  Fetching elements for '{desig}' from JPL Horizons…")
+    el = fetch_comet(desig, date=date)
 
     obs_jd = date_to_jd(date) if date else today_jd()
     print(f"\n  Using: {el.get('name','')}")
+    print(f"  Source: {el.get('source','')}")
+    print(f"  q={el['q']:.5f} AU   e={el['e']:.7f}   i={el['i']:.3f}°")
+    print(f"  Ω={el['Omega']:.4f}°   ω={el['omega']:.4f}°")
     print(f"  Date:  {jd_to_str(obs_jd)}")
     return el, obs_jd
 
@@ -1907,23 +1835,20 @@ def main():
 
     # ── List database ───────────────────────────────────────────────────
     if args.list:
-        print(f"\n  {'Designation':<45} {'q (AU)':>8}  {'e':>8}  Note")
+        print(f"\n  {'Designation':<45} {'Preferred date':<14}  Note")
         print("  " + "─" * 90)
-        for name, el in COMET_DB.items():
-            print(f"  {name:<45} {el['q']:8.5f}  {el['e']:8.5f}  "
-                  f"{el.get('note','')[:35]}")
-        print()
+        for name, meta in COMET_DB.items():
+            print(f"  {name:<45} {meta.get('obs',''):<14}  "
+                  f"{meta.get('note','')[:40]}")
+        print(f"\n  ({len(COMET_DB)} comets — orbital elements fetched live from JPL Horizons)\n")
         return
 
     # ── Select / fetch comet ────────────────────────────────────────────
     obs_jd_im: float | None = None
     if args.fetch:
-        comet_el = fetch_comet(args.fetch, date=args.date, prefer=args.prefer)
+        comet_el = fetch_comet(args.fetch, date=args.date)
     elif args.comet:
-        try:
-            comet_el = fetch_comet(args.comet, date=args.date, prefer='local')
-        except Exception:
-            comet_el = fetch_comet(args.comet, date=args.date, prefer=args.prefer)
+        comet_el = fetch_comet(args.comet, date=args.date)
     else:
         comet_el, obs_jd_im = interactive_menu()
 

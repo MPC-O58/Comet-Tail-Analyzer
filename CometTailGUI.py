@@ -3,32 +3,46 @@
 """
 =============================================================================
   CometTailGUI.py  —  Finson–Probstein Comet Dust Tail Analyzer
-  Version 2.3   ·   Teerasak Thaluang (MPC O51/O58)
+  Version 2.4   ·   Teerasak Thaluang (MPC O51/O58)
   Native Desktop Application (PyQt6 + Matplotlib)
 =============================================================================
   Changelog:
+    v2.4  • Pairs with comet_tail_analyzer.py v2.4.
+          • PRESET tab: obs_date field was missing from layout (invisible) —
+            fixed; _on_comet_selected(0) now called on init to seed first
+            entry; "USE THIS COMET" button now triggers a live Horizons
+            fetch (identical pipeline to FETCH JPL tab).
+          • FETCH tab renamed "FETCH JPL"; MPC source dropdown removed
+            (MPC API returns HTTP 403; JPL Horizons is the sole source).
+          • FetchWorker: prefer parameter removed; always uses Horizons.
+          • fetch_status / preset_status: PRESET tab now has its own status
+            label; _fetch_source flag routes success/error to the correct
+            label and re-enables the correct button.
+          • date_to_jd: accepts decimal-day (2018-01-14.583), HH:MM,
+            HH:MM:SS in all date fields.
+          • LCWindow: observation-date vertical dashed line (blue) and
+            perihelion vertical dashed line (orange) added to date-axis
+            plot; "Now" vertical line and scatter star removed — current
+            magnitude and distance shown as a text annotation instead.
+          • Window title updated to v2.4; "local DB" source fallback
+            replaced with "JPL Horizons"; bare print() in LC fallback
+            replaced with logging.warning().
+
     v2.3  • Pairs with comet_tail_analyzer.py v2.3.
           • Fixed _effective_plate_scale_arcsec() to correctly delegate
-            to ControlPanel attributes (self.ctrl) instead of MainWindow.
-          • Fixed btn_compute QSS override: added setObjectName("btn_compute").
+            to ControlPanel attributes (self.ctrl).
+          • Fixed btn_compute QSS override.
           • Fixed LCWindow._draw(): added missing timedelta import.
-          • Removed dead imports: io, time, QSettings, QToolBar.
-          • Removed dead InfoPanel._update_cobs_label() method.
+          • Removed dead imports and dead InfoPanel method.
 
-    v2.2  • Pairs with comet_tail_analyzer.py v2.2 (syndyne gap fix for
-            small β by increasing n_pts 80 → 200).
+    v2.2  • Pairs with comet_tail_analyzer.py v2.2.
 
-    v2.1  • Fixed WCS auto-override silently clobbering user plate-scale
-            edits on every Compute.
-          • Reset _wcs_ps_deg = None on new image load (stale metadata fix).
-          • Fixed CD matrix plate-scale: sqrt(|det(CD)|) instead of
-            sqrt(cd12² + cd22²).
+    v2.1  • Fixed WCS auto-override; reset _wcs_ps_deg on new image load.
+          • Fixed CD matrix plate-scale calculation.
           • Added auto-sync ps_spin ↔ au_px_spin.
-          • Added _effective_plate_scale_arcsec() single source of truth.
 
-    v2.0  • Replaced deprecated datetime.utcnow() with timezone-aware
-            datetime.now(utc) in LCWindow "now" marker.
-          • STYLE built dynamically by _build_style(); removed placeholder.
+    v2.0  • Replaced deprecated datetime.utcnow().
+          • STYLE built dynamically by _build_style().
 =============================================================================
   Run:
       python CometTailGUI.py
@@ -38,7 +52,7 @@
 =============================================================================
 """
 
-__version__ = "2.3"
+__version__ = "2.4"
 
 import sys, os, warnings, csv
 warnings.filterwarnings("ignore")
@@ -576,15 +590,14 @@ class FetchWorker(QThread):
     finished = pyqtSignal(dict)
     error    = pyqtSignal(str)
 
-    def __init__(self, desig, date, prefer):
+    def __init__(self, desig, date):
         super().__init__()
-        self.desig  = desig
-        self.date   = date
-        self.prefer = prefer
+        self.desig = desig
+        self.date  = date
 
     def run(self):
         try:
-            el = cta.fetch_comet(self.desig, date=self.date or None, prefer=self.prefer)
+            el = cta.fetch_comet(self.desig, date=self.date or None)
             self.finished.emit(el)
         except Exception as ex:
             self.error.emit(str(ex))
@@ -1226,7 +1239,7 @@ class PlotCanvas(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 class ControlPanel(QScrollArea):
     compute_requested = pyqtSignal(dict, float, list, list, int, int)
-    fetch_requested   = pyqtSignal(str, str, str)
+    fetch_requested   = pyqtSignal(str, str)
     image_loaded      = pyqtSignal(object)   # object allows None or ndarray
 
     def __init__(self, parent=None):
@@ -1282,13 +1295,27 @@ class ControlPanel(QScrollArea):
         self.note_label.setStyleSheet("color:#1e4060; font-size:10px;")
         pv.addWidget(self.note_label)
         pv.addWidget(self._lbl("OBSERVATION DATE (UT)"))
-        self.obs_date = QLineEdit("2020-07-23")
-        pv.addWidget(self.obs_date)
-        btn_use = QPushButton("USE THIS COMET")
-        btn_use.clicked.connect(self._use_preset)
-        pv.addWidget(btn_use)
+        self.obs_date = QLineEdit()
+        self.obs_date.setPlaceholderText("YYYY-MM-DD  or  YYYY-MM-DD.fff")
+        self.obs_date.setToolTip(
+            "Observation date in UT.\n"
+            "Accepted formats:\n"
+            "  2018-01-14          (midnight)\n"
+            "  2018-01-14.583      (decimal day — astronomical standard)\n"
+            "  2018-01-14 13:55    (HH:MM)\n"
+            "  2018-01-14 13:55:12 (HH:MM:SS)"
+        )
+        pv.addWidget(self.obs_date)          # was missing — field was invisible
+        self.btn_use = QPushButton("USE THIS COMET")
+        self.btn_use.clicked.connect(self._use_preset)
+        pv.addWidget(self.btn_use)
+        self.preset_status = QLabel("")
+        self.preset_status.setWordWrap(True)
+        self.preset_status.setStyleSheet("color:#2a5060; font-size:10px;")
+        pv.addWidget(self.preset_status)
         pv.addStretch()
         self.comet_tabs.addTab(preset_w, "PRESET")
+        self._on_comet_selected(0)           # seed note + preferred date for first item
 
         # Manual
         manual_w = QWidget()
@@ -1319,12 +1346,8 @@ class ControlPanel(QScrollArea):
         fv.addWidget(self.fetch_desig)
         fv.addWidget(self._lbl("OBS DATE (optional)"))
         self.fetch_date = QLineEdit()
-        self.fetch_date.setPlaceholderText("YYYY-MM-DD")
+        self.fetch_date.setPlaceholderText("YYYY-MM-DD  or  YYYY-MM-DD.fff")
         fv.addWidget(self.fetch_date)
-        fv.addWidget(self._lbl("SOURCE"))
-        self.fetch_src = QComboBox()
-        self.fetch_src.addItems(["JPL Horizons", "MPC"])
-        fv.addWidget(self.fetch_src)
         self.btn_fetch = QPushButton("FETCH ORBITAL ELEMENTS")
         self.btn_fetch.clicked.connect(self._do_fetch)
         fv.addWidget(self.btn_fetch)
@@ -1333,7 +1356,7 @@ class ControlPanel(QScrollArea):
         self.fetch_status.setStyleSheet("color:#2a5060; font-size:10px;")
         fv.addWidget(self.fetch_status)
         fv.addStretch()
-        self.comet_tabs.addTab(fetch_w, "FETCH MPC")
+        self.comet_tabs.addTab(fetch_w, "FETCH JPL")
 
         # ── Model params ──────────────────────────────────────────────────
         grp_model = QGroupBox("⚙  MODEL")
@@ -1613,21 +1636,25 @@ class ControlPanel(QScrollArea):
             return [int(x) for x in s.split(",") if x.strip()]
         except: return []
 
+
     # ── Preset comet ──────────────────────────────────────────────────────
     def _on_comet_selected(self, idx):
         key = list(cta.COMET_DB.keys())[idx]
-        el  = cta.COMET_DB[key]
-        self.note_label.setText(el.get("note",""))
-        self.obs_date.setText(el.get("obs", el.get("T","")))
+        meta = cta.COMET_DB[key]
+        self.note_label.setText(meta.get("note", ""))
+        self.obs_date.setText(meta.get("obs", ""))
 
     def _use_preset(self):
-        key = self.combo_comet.currentText()
-        el  = {**cta.COMET_DB[key], "name": key}
-        el["T_jd"] = cta.date_to_jd(el["T"])
-        self._comet_el = el
-        try:
-            self._comet_el["obs_jd"] = cta.date_to_jd(self.obs_date.text())
-        except: pass
+        """Fetch live orbital elements from Horizons for the selected catalogue comet."""
+        key  = self.combo_comet.currentText()
+        date = self.obs_date.text().strip()
+        if not key:
+            return
+        self._pending_obs_date = date        # consumed by on_fetch_done
+        self._fetch_source     = 'preset'    # so callbacks know which status to update
+        self.btn_use.setEnabled(False)
+        self.preset_status.setText("Fetching from JPL Horizons…")
+        self.fetch_requested.emit(key, date)
 
     def _use_manual(self):
         try:
@@ -1646,23 +1673,33 @@ class ControlPanel(QScrollArea):
         if not desig:
             self.fetch_status.setText("Enter a designation.")
             return
-        prefer = "horizons" if "Horizons" in self.fetch_src.currentText() else "mpc"
+        self._fetch_source = 'fetch'
         self.btn_fetch.setEnabled(False)
-        self.fetch_status.setText("Fetching…")
-        self.fetch_requested.emit(desig, self.fetch_date.text(), prefer)
+        self.fetch_status.setText("Fetching from JPL Horizons…")
+        self.fetch_requested.emit(desig, self.fetch_date.text())
 
     def on_fetch_done(self, el):
         self._comet_el = el
-        self._comet_el["obs_jd"] = cta.date_to_jd(
-            self.fetch_date.text() or el.get("T","")[:10])
-        self.fetch_status.setText(
-            f"✓  {el.get('name','')[:40]}\n"
-            f"q={el['q']:.5f}  e={el['e']:.6f}  i={el['i']:.2f}°")
-        self.btn_fetch.setEnabled(True)
+        pending = getattr(self, '_pending_obs_date', '')
+        self._pending_obs_date = ''
+        date_str = pending or self.fetch_date.text() or el.get("T", "")[:10]
+        self._comet_el["obs_jd"] = cta.date_to_jd(date_str)
+        msg = (f"✓  {el.get('name','')[:40]}\n"
+               f"q={el['q']:.5f}  e={el['e']:.6f}  i={el['i']:.2f}°")
+        if getattr(self, '_fetch_source', '') == 'preset':
+            self.preset_status.setText(msg)
+            self.btn_use.setEnabled(True)
+        else:
+            self.fetch_status.setText(msg)
+            self.btn_fetch.setEnabled(True)
 
     def on_fetch_error(self, msg):
-        self.fetch_status.setText(f"✗  {msg}")
-        self.btn_fetch.setEnabled(True)
+        if getattr(self, '_fetch_source', '') == 'preset':
+            self.preset_status.setText(f"✗  {msg}")
+            self.btn_use.setEnabled(True)
+        else:
+            self.fetch_status.setText(f"✗  {msg}")
+            self.btn_fetch.setEnabled(True)
 
     # ── Image ──────────────────────────────────────────────────────────────
     def _load_image(self):
@@ -2198,7 +2235,7 @@ class InfoPanel(QWidget):
         self.orb_labels["Ω"].setText(f"{comet_el['Omega']:.4f}°")
         self.orb_labels["ω"].setText(f"{comet_el['omega']:.4f}°")
         self.orb_labels["T"].setText(comet_el.get("T","")[:10])
-        self.orb_labels["Source"].setText(comet_el.get("source","local DB"))
+        self.orb_labels["Source"].setText(comet_el.get("source", "JPL Horizons"))
         self.tabs.setCurrentIndex(0)
 
     def get_selected_betas(self) -> list:
@@ -2560,7 +2597,8 @@ class ImageSetupDialog(QDialog):
 class LCWindow(QDialog):
     """Standalone light curve window — independent, safe matplotlib canvas."""
 
-    def __init__(self, cobs_data: dict, obs_r=None, obs_delta=None, parent=None):
+    def __init__(self, cobs_data: dict, obs_r=None, obs_delta=None,
+                 obs_jd=None, T_jd=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(
             f"☄ Light Curve — {cobs_data.get('comet_name','')}")
@@ -2615,7 +2653,7 @@ class LCWindow(QDialog):
 
         # Draw — wrap in try/except
         try:
-            self._draw(cobs_data, obs_r, obs_delta)
+            self._draw(cobs_data, obs_r, obs_delta, obs_jd, T_jd)
         except Exception as e:
             self._ax.text(0.5, 0.5, f"Plot error:\n{e}",
                           ha='center', va='center',
@@ -2623,7 +2661,7 @@ class LCWindow(QDialog):
                           color='#ff4444', fontsize=10)
         self._canvas.draw()
 
-    def _draw(self, d, obs_r, obs_delta):
+    def _draw(self, d, obs_r, obs_delta, obs_jd=None, T_jd=None):
         import numpy as np
         from datetime import datetime, timedelta, timezone
 
@@ -2707,23 +2745,38 @@ class LCWindow(QDialog):
                                label=f"H₀={H0:.2f}  n={n:.2f}", zorder=4)
                 except Exception as e:
                     # Fallback: simple plot without interpolation
-                    print(f"Light curve interpolation failed: {e}, using simple plot")
+                    logging.warning("Light curve interpolation failed: %s — using simple plot", e)
                     dt_arr = [datetime.strptime(o["date"],"%Y-%m-%d") for o in sorted_oph]
                     m_pred = [H0 + 5*np.log10(o["delta"]) + 2.5*n*np.log10(o["r_helio"])
                              for o in sorted_oph]
                     ax.plot(dt_arr, m_pred, color="#ffaa00", lw=2.5,
                            label=f"H₀={H0:.2f}  n={n:.2f}", zorder=4)
 
-            # Current observation line
+            # ── Observation date vertical line ─────────────────────────
+            if obs_jd is not None:
+                obs_dt = datetime(1858, 11, 17) + timedelta(days=obs_jd - 2400000.5)
+                ax.axvline(obs_dt, color="#58a6ff", lw=1.2, ls="--", alpha=0.85,
+                           zorder=5, label=f"Obs date: {obs_dt.strftime('%Y-%m-%d')}")
+
+            # ── Perihelion date vertical line ──────────────────────────
+            if T_jd is not None:
+                peri_dt = datetime(1858, 11, 17) + timedelta(days=T_jd - 2400000.5)
+                ax.axvline(peri_dt, color="#ffa657", lw=1.2, ls="--", alpha=0.85,
+                           zorder=5, label=f"Perihelion: {peri_dt.strftime('%Y-%m-%d')}")
+
+            # ── "Now" info — text only, no vertical line ───────────────
             if obs_r and obs_delta and H0 and n:
-                # Use a naive datetime for matplotlib date axis (matches
-                # the naive datetimes built from "%Y-%m-%d" above).
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
                 m_now = H0 + 5*np.log10(obs_delta) + 2.5*n*np.log10(obs_r)
-                ax.axvline(now, color="#f85149", lw=1.0, ls="--", alpha=0.8)
-                ax.scatter([now], [m_now], s=120, zorder=6, marker="*",
-                           color="#f85149",
-                           label=f"Now: m={m_now:.1f} (r={obs_r:.3f} AU)")
+                # Show as a small annotation in the lower-right corner
+                ax.annotate(
+                    f"Now:  m = {m_now:.1f}    r = {obs_r:.3f} AU    Δ = {obs_delta:.3f} AU",
+                    xy=(1.0, 0.02), xycoords="axes fraction",
+                    ha="right", va="bottom", fontsize=8,
+                    color="#f85149",
+                    bbox=dict(boxstyle="round,pad=0.3",
+                              facecolor=T["panel_bg"], edgecolor="#f85149",
+                              alpha=0.7))
 
             ax.set_xlabel("Date", color=T["mpl_label"], fontsize=10)
 
@@ -2745,7 +2798,14 @@ class LCWindow(QDialog):
                 ax.plot(r_fit, m_fit, color="#ffaa00", lw=2.0,
                         label=f"H₀={H0:.2f}  n={n:.2f}")
             if obs_r and obs_delta and H0 and n:
-                ax.axvline(obs_r, color="#f85149", lw=1.0, ls="--", alpha=0.8)
+                m_now = H0 + 5*np.log10(obs_delta) + 2.5*n*np.log10(obs_r)
+                ax.annotate(
+                    f"Now:  m = {m_now:.1f}    r = {obs_r:.3f} AU",
+                    xy=(1.0, 0.02), xycoords="axes fraction",
+                    ha="right", va="bottom", fontsize=8, color="#f85149",
+                    bbox=dict(boxstyle="round,pad=0.3",
+                              facecolor=T["panel_bg"], edgecolor="#f85149",
+                              alpha=0.7))
 
         ax.set_title(d.get("comet_name",""), color=T["mpl_title"],
                      fontsize=11, pad=6)
@@ -2761,7 +2821,7 @@ class LCWindow(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("☄ Comet Tail Analyzer  —  Finson–Probstein Model  ·  V2.3")
+        self.setWindowTitle("☄ Comet Tail Analyzer  —  Finson–Probstein Model  ·  v2.4")
         self.setMinimumSize(1300, 800)
         self.resize(1440, 900)
 
@@ -2890,8 +2950,15 @@ class MainWindow(QMainWindow):
                 info       = self._model["info"] if self._model else {}
                 r_now      = info.get("r_helio")
                 delta_now  = info.get("r_geo")
+            # obs_jd: user's observation date; T_jd: perihelion from orbital elements
+            obs_jd = getattr(self._comet_el, 'get', lambda k, v=None: None)('obs_jd') \
+                     if self._comet_el else None
+            if obs_jd is None and self._comet_el:
+                obs_jd = self._comet_el.get('obs_jd')
+            T_jd = self._comet_el.get('T_jd') if self._comet_el else None
             # Store reference — prevents garbage collection crash
-            self._lc_win = LCWindow(d, r_now, delta_now, parent=None)
+            self._lc_win = LCWindow(d, r_now, delta_now,
+                                    obs_jd=obs_jd, T_jd=T_jd, parent=None)
             self._lc_win.show()
             self._lc_win.raise_()
             self._lc_win.activateWindow()
@@ -3189,8 +3256,8 @@ class MainWindow(QMainWindow):
         self.ctrl.set_computing(False)
 
     # ── Fetch ──────────────────────────────────────────────────────────────
-    def _on_fetch(self, desig, date, prefer):
-        self._fetch_worker = FetchWorker(desig, date, prefer)
+    def _on_fetch(self, desig, date):
+        self._fetch_worker = FetchWorker(desig, date)
         self._fetch_worker.finished.connect(self.ctrl.on_fetch_done)
         self._fetch_worker.error.connect(self.ctrl.on_fetch_error)
         self._fetch_worker.start()
@@ -3294,7 +3361,7 @@ class MainWindow(QMainWindow):
             "COMET TAIL ANALYZER</div>"
             "<div style='font-size:10px;color:#2a5070;letter-spacing:3px;margin-top:4px'>"
             "FINSON–PROBSTEIN DUST TAIL MODEL  ·  1968</div>"
-            "<div style='font-size:11px;color:#3a6090;margin-top:8px'>Version 2.3  ·  2026</div>"
+            "<div style='font-size:11px;color:#3a6090;margin-top:8px'>Version 2.4  ·  2026</div>"
             "</div>")
         vb.addWidget(banner)
 
@@ -3351,7 +3418,7 @@ class MainWindow(QMainWindow):
         section("SOFTWARE STACK",
             "Python 3  ·  NumPy  ·  SciPy  ·  Astropy<br>"
             "Matplotlib  ·  PyQt6  ·  Pillow  ·  astroquery<br>"
-            "Data sources: JPL Horizons  ·  MPC  ·  local DB (33 comets)")
+            "Data sources: JPL Horizons (sole orbital element source)  ·  COBS")
 
         section("LICENSE",
             "Open-source for scientific and educational use.<br>"
@@ -3370,7 +3437,7 @@ class MainWindow(QMainWindow):
         fl = QHBoxLayout(foot); fl.setContentsMargins(16,8,16,8)
         lbl_ver = QLabel(
             "<span style='color:#1a3050;font-size:10px;font-family:'Segoe UI',Arial,sans-serif'>"
-            "☄ Comet Tail Analyzer v2.3 · Teerasak Thaluang · MPC-O51/O58</span>")
+            "☄ Comet Tail Analyzer v2.4 · Teerasak Thaluang · MPC-O51/O58</span>")
         fl.addWidget(lbl_ver,1)
         ok_btn = QPushButton("  OK  ")
         ok_btn.clicked.connect(dlg.accept)
