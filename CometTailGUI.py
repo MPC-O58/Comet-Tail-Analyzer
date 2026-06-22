@@ -3,10 +3,337 @@
 """
 =============================================================================
   CometTailGUI.py  —  Finson–Probstein Comet Dust Tail Analyzer
-  Version 2.4   ·   Teerasak Thaluang (MPC O51/O58)
+  Version 3.0   ·   Teerasak Thaluang (MPC O51/O58)
   Native Desktop Application (PyQt6 + Matplotlib)
 =============================================================================
   Changelog:
+    v3.0  • REMOVED the "Activity: VERY HIGH (outburst / hyperactive
+            candidate)"-style categorical line from the Dust production
+            rate… calculator's output. Afρ defaults to a placeholder
+            value when the dialog opens — showing a confident-sounding
+            classification derived from whatever happens to be in that
+            box (real measurement or untouched placeholder, no way to
+            tell apart from the display) risked being read as a
+            diagnosis rather than what it actually is. Q_d itself is
+            still shown — it's just deterministic math given the
+            current inputs, for the user to interpret themselves.
+    v3.0  • Dust particle radius… calculator's β range mode used to show
+            "β = 0.05 – 1 → radius = 1.1 – 23.0 µm" — two ranges the
+            reader had to mentally cross-match in REVERSE order (smaller
+            β gives the LARGER radius), easy to misread as a direct
+            left-to-right pairing. Now shows each β explicitly paired
+            with its own radius on its own line instead.
+    v3.0  • Default tuning: Auto Stretch now sets Contrast=-150 (was
+            200), Intensity=-300 (unchanged); Isophote levels default
+            changed 6→3, Isophote smoothing default changed 2.0→6.0 px.
+    v3.0  • Contrast/Intensity now restretch the image live as the
+            sliders move — REMOVED the separate "Apply Stretch" button
+            entirely. Auto Stretch still exists (sets both sliders to a
+            reasonable starting point in one click).
+    v3.0  • Simplified the FITS image stretch from 4 technical sliders
+            (Shadow %, Highlight %, Softness, Gamma) to 2 simple ones
+            (Contrast, Intensity, both -1000..1000), matching the
+            simpler two-knob stretch UI found in some comet-tracking
+            viewers. This is a reparameterization of the same underlying
+            asinh stretch — Intensity shifts the black point relative to
+            the image's robust background level (negative reveals more
+            faint coma/tail, positive shows only bright cores); Contrast
+            sets how wide the stretched range above black is (higher =
+            steeper/more contrasty). NOT a verified match to any other
+            tool's exact internal formula — defaults (Auto Stretch:
+            Contrast=200, Intensity=-300) are starting points to tune by
+            eye, not a derived optimum.
+    v3.0  • Animator's Fixed FOV now auto-syncs to the loaded overlay
+            image's own angular width (image pixel width × au_per_px ×
+            deg/AU at the current working date) every time Compute frames
+            is clicked, if an image is loaded — so animation frames are
+            shown at the same scale the overlay was built at, rather than
+            whatever Fixed FOV size happened to be left over. No-op with
+            no image loaded. A status-bar message reports the synced
+            value (and the inputs used) each time, since it overrides
+            whatever was in the Full width field.
+          • DISPLAY panel: added a "Syndynes/Synchrones:" label above the
+            general Width/Opacity sliders, matching the "Orbital path:"
+            label added for its own sliders just below — previously only
+            the orbital path ones were labelled, leaving the general
+            pair's target ambiguous by comparison.
+    v3.0  • Released as v3.0 — this version number now covers everything
+            accumulated under the "v2.5 (unreleased, not yet pushed to
+            GitHub)" working label across the prior development session:
+            the embedded Animator, the Dust particle radius…/Dust
+            production rate… calculators, the Animator↔Orbit↔EPHEMERIS
+            date linking, the equal-aspect-ratio and N/E-compass/starfield
+            fixes, the β TABLE/LIGHT CURVE/ANALYSIS tab removals, and the
+            bug fixes below. Pairs with comet_tail_analyzer.py v3.0.
+          • Orbital path now has its own dedicated Line width/Opacity
+            sliders (DISPLAY panel), separate from the syndyne/synchrone
+            ones — it was previously hardcoded at lw=0.9/alpha=0.5 with
+            no way to adjust it, which against a busy starfield/isophote
+            background made it nearly invisible (default raised to
+            lw=1.0/alpha=0.7, both still freely adjustable down or up).
+    v3.0  • EPHEMERIS (r☉, Δ, Phase, RA, Dec, Date) now also tracks the
+            currently-shown Animator frame, alongside obs_date — fully
+            consistent with the Orbit-view link added just above (orbital
+            elements themselves don't change with date, so only that half
+            of update_info() actually changes per frame).
+          • BUG FIX: every frame computed by the Animator showed the
+            literal title "Comet" instead of the actual comet's name.
+            Cause: compute_model() itself never sets info['name'] — only
+            _on_model_ready() does, for the regular Compute Model flow;
+            the Animator's worker called compute_model() directly and
+            never added it, so the title fell back to draw_model()'s
+            info.get("name","Comet") default. Fixed by setting it in the
+            worker the same way _on_model_ready() does.
+          • REMOVED the duplicate in-plot "PsAng = …° (anti-solar / tail
+            dir)" text label — PsAng is already shown in the plot's top
+            title line, no need to repeat it as a separate annotation
+            inside the plot area.
+    v3.0  • The embedded Animator now re-links automatically to whichever
+            comet is currently selected (new ControlPanel.comet_ready
+            signal, emitted after preset/FETCH JPL/manual entry all set
+            _comet_el): Start date = that comet's obs date, End date =
+            Start+360d. Switching to a different comet always disables
+            Play/the scrub slider and clears any previously computed
+            frames (they belonged to the old comet) — Compute frames must
+            be run again for the new one rather than silently keep
+            showing stale results.
+          • Animator ↔ Orbit linking: scrubbing/playing the Animator now
+            keeps the obs_date field in lockstep with whichever frame is
+            showing, and _current_obs_jd() (read by View > Orbit position
+            diagram… and the Dust production rate… calculator) now
+            prefers that field over the comet's static fetch-time obs_jd.
+            Net effect: scrub to an interesting date in the animation,
+            open Orbit, and it shows that exact date — no extra step.
+          • Orbit position diagram… gained a direction-of-motion arrow at
+            the comet's current position (heliocentric velocity unit
+            vector from compute_orbit_diagram(), previously discarded —
+            see comet_tail_analyzer.py CHANGELOG).
+    v3.0  • Compute Model's standalone (no image) view now defaults to a
+            600 arcmin Fixed FOV instead of the old auto-fit percentile
+            box, so it's the same starting frame size the embedded
+            Animator below would continue from — no jump in apparent
+            zoom between looking at the static model and playing the
+            animation. The Animator's own frame-size field defaults to
+            600 arcmin for the same reason (both still freely editable).
+            Overlay mode (image loaded) is completely unaffected — still
+            always fits the plot area to the image's own native pixel
+            extent exactly as in the earliest versions; this default only
+            applies when there's no image to fit to.
+          • Animator's default End date changed from Start+30 to
+            Start+360 days.
+    v3.0  • Animator moved from a separate popup window into the main
+            window itself: its controls (date range, step, Fixed
+            FOV/distance toggle, Auto-suggest, Compute frames, play/
+            scrub) now live in a new "ANIMATOR" group box in the INFO
+            tab, right below ORBITAL ELEMENTS. Frames render directly
+            into the MAIN canvas (same PlotCanvas the regular Compute
+            Model view uses) instead of a dedicated dialog canvas — no
+            more separate window to manage. Orchestration (worker
+            thread, frame cache, play timer) moved from the AnimatorWindow
+            class (removed) into MainWindow's new _anim_* methods, which
+            gather comet/β/age inputs fresh from the model panel on every
+            Compute/Auto-suggest click rather than once at dialog-open
+            time, since this panel now stays open across comet changes.
+          • REMOVED the ANALYSIS tab and the "Generate analysis" menu
+            item entirely. Its Afρ-based dust-production report
+            duplicated the standalone Calculation > Dust production
+            rate… calculator (same compute_dust_production_rate()
+            formula) added earlier in v3.0, just shown a second way.
+            generate_dust_analysis() is left in comet_tail_analyzer.py as
+            a library function in case a text-report version is wanted
+            again later; only the GUI tab/menu item/caller were removed.
+            Also removed as a result: _ensure_model_computed() and the
+            self._model_for/_pending_model_callback bookkeeping it used
+            (dead code — Generate analysis was their only caller; the
+            embedded Animator above manages its own independent state
+            and never reuses the main Compute Model pipeline).
+          • The right panel now has only one tab (INFO) after the β
+            TABLE/LIGHT CURVE/ANALYSIS removals across v3.0 — its tab
+            bar auto-hides (QTabWidget.setTabBarAutoHide) instead of
+            showing a single redundant "INFO" tab button, and the
+            panel's header strip was relabelled "INFO" (was "ANALYSIS",
+            stale since that tab is gone).
+    v3.0  • BUG FIX: the N/E compass (and to a lesser extent the now-
+            removed starfield, see below) ended up positioned near the
+            middle of the standalone plot instead of its intended
+            bottom-right corner, as a direct side effect of the
+            adjustable='datalim' fix above — set_aspect(...,
+            adjustable='datalim') only computes the final, box-filling
+            axis limits LAZILY at actual draw time, so the compass-
+            position code's self.ax.get_xlim()/get_ylim() calls (which
+            run immediately after set_aspect(), not at draw time) were
+            reading the stale PRE-adjustment limits. Fixed by calling
+            self.ax.apply_aspect() right after set_aspect() to force that
+            computation to happen immediately — the compass formula
+            itself was already correctly targeting the bottom-right
+            corner, it just had the wrong numbers to work with.
+          • REMOVED the random starfield (200 scattered white dots) from
+            the standalone plot — purely decorative, no astrometric
+            meaning, and was also reading the same stale limits as the
+            compass bug above.
+    v3.0  • BUG FIX: the main window's standalone (no-image) plot and the
+            Animator's plot showed visibly different tail shapes for the
+            EXACT same model/comet/date — main window looked stretched
+            and steep, Animator looked flatter and closer to how the
+            tail actually looks in real images. Cause: draw_model()'s
+            standalone branch never called ax.set_aspect('equal'), so
+            matplotlib used its default "auto" aspect — stretching the
+            x/y degree axes independently to fill whatever pixel box the
+            host canvas widget happened to have. The main window's canvas
+            is much wider than the Animator's embedded one, so the same
+            angular data got distorted by two different amounts. Fixed
+            by adding ax.set_aspect('equal', ...) right after the
+            xlim/ylim are set, with the adjustable mode split by use case:
+              - Animator (fixed_xlim/fixed_ylim given): adjustable='box'
+                — "Fixed FOV"/"Fixed distance" exist to show an EXACT
+                requested angular size, so any aspect mismatch between
+                that size and the dialog's canvas is taken up as blank
+                padding, never by silently widening the requested FOV.
+              - Main window auto-fit (no fixed_xlim/fixed_ylim):
+                adjustable='datalim' — no precision promise to keep here,
+                so instead of padding with empty space (which, for
+                elongated tails far wider than tall, first showed up as
+                the plot shrinking to a thin sliver with the legend now
+                looming huge over it — far more confusing than the
+                original distortion), matplotlib extends whichever axis
+                range is needed to fill the canvas completely.
+            1° in RA-direction now always renders as the same screen
+            length as 1° in Dec-direction in both windows, matching true
+            angular proportions as they'd appear in a real image, AND the
+            main window's plot fills its canvas the way it always did.
+    v3.0  • BUG FIX: Light curve…/Orbit position diagram…/Generate
+            analysis/Dust production rate… kept showing the PREVIOUS
+            comet after switching to a new one and clicking "Use this
+            comet", unless Compute Model was pressed again first. Root
+            cause: _active_comet_el() preferred self._comet_el (this
+            window's own copy, only updated lazily after a compute
+            finishes) over self.ctrl._comet_el (ControlPanel's copy,
+            updated the instant a comet is selected/fetched — always the
+            freshest). Swapped the priority; every menu action above
+            goes through this one helper so the fix covers all of them.
+          • BUG FIX: Orbit position diagram… stayed pinned in front of
+            MainWindow at all times, including after MainWindow regained
+            focus. Cause: OrbitWindow was constructed with parent=self
+            (MainWindow) — a non-modal QDialog with a parent is kept
+            "transient for" it by the window manager, which pins it
+            above that specific parent permanently. LCWindow already
+            avoided this with parent=None; applied the same fix here
+            (and now stores the reference as self._orbit_win instead of
+            a throwaway local, matching LCWindow's GC-safety pattern).
+          • REMOVED the β TABLE and LIGHT CURVE tabs from the right-hand
+            panel entirely (now just INFO + ANALYSIS). Both were fully
+            redundant with dedicated menu-driven access added earlier in
+            v3.0: grain radius lives in Calculation > Dust particle
+            radius… (self-contained, no model needed), and the light
+            curve (plot + H₀/n) is shown by the View > Light curve…
+            popup, which already fetches COBS automatically. Removed
+            along with them: get_selected_betas() and
+            refresh_grain_radius_column() (operated on the now-gone
+            table), and the now-pointless H₀/n/status mirroring in
+            _fetch_cobs() (the status bar and the LCWindow popup already
+            cover it). ANALYSIS is tab index 1 now, not 3.
+    v3.0  • NEW: Calculation > Dust particle radius… — standalone β→radius
+            calculator (single value or range), independent of any comet
+            or computed model since the formula needs only β/ρ/Qpr.
+            Always delegates to beta_to_size(), now extended with an
+            optional Qpr parameter (default 1.0, backward compatible) so
+            it can stay the single source of truth here too. The grain-
+            radius section that used to print in the ANALYSIS tab (and
+            the "Selected β → grain radii" use of the β TABLE's
+            checkboxes) was removed — this calculator replaces it; the β
+            TABLE's own radius column is unaffected.
+          • NEW: Calculation > Dust production rate… — standalone Afρ→Q_d
+            calculator. r_h is propagated from the selected comet's
+            orbital elements for a user-entered date (read-only, like
+            genuinely Horizons-sourced values) while Afρ/v_dust/p_v stay
+            editable, each with its own literature-referenced default.
+            Delegates to comet_tail_analyzer.py's new
+            compute_dust_production_rate(), shared with the unchanged
+            inline Afρ section in the ANALYSIS tab so the two formulas
+            can never drift apart.
+          • There is no separate combined "Physical parameters" dialog —
+            ρ_d lives in Dust particle radius…, v_dust/p_v live in Dust
+            production rate…, each with its own default and override,
+            since each calculator is self-contained rather than reading
+            from shared global state.
+          • NEW: View > Animator… — steps obs date across a user-set
+            start/end/step range and plays back the resulting F-P model
+            frames, for spotting when a comet's tail is widest or its
+            morphology changes fastest (e.g. to plan imaging sessions).
+            Frame size is a toggle: "Fixed FOV" (arcmin, locks the real
+            angular field of view including the effect of changing
+            Earth-comet distance Δ — for imaging planning) or "Fixed
+            distance" (AU, removes the Δ effect — for comparing the
+            tail's actual physical growth). An Auto-suggest button samples
+            the date range and proposes a size that fits the widest tail
+            with ~20% margin. Reuses PlotCanvas.draw_model() for every
+            frame via new optional fixed_xlim/fixed_ylim parameters
+            (backward compatible — default None preserves the existing
+            auto-fit behavior for the main view exactly), so animation
+            frames render identically to the main view with zero
+            duplicated rendering code.
+          • View > Orbit position diagram… no longer requires Compute
+            Model first — same auto-chain pattern as Light curve…, only
+            a comet needs to be selected/fetched.
+          • "Generate analysis" (Ctrl+G) replaces the old GENERATE
+            ANALYSIS button.
+          • View menu gained "Light curve…" (Ctrl+L) and "Animator…",
+            alongside the existing Orbit diagram — consolidates every
+            "open a view" action into one menu instead of splitting them
+            between the menu bar and sidebar buttons.
+          • REMOVED sidebar buttons: FETCH COBS, PLOT LC, GENERATE
+            ANALYSIS. Their underlying actions are now reached only via
+            the menu items above, which auto-chain their prerequisites:
+            Light curve… fetches COBS automatically if not already
+            fetched for the selected comet; Generate analysis computes
+            the F-P model first if needed, then fetches COBS, then runs
+            the analysis — no separate manual button presses required at
+            each stage, only a comet needs to be selected/fetched first.
+          • Added per-comet caching for both the computed model and COBS
+            data (invalidated automatically when the selected comet
+            changes) so the auto-chained actions above never silently
+            reuse a previous comet's stale results.
+          • Pairs with comet_tail_analyzer.py v3.0.
+          • CRITICAL FIX: β→grain-radius formula was using an uncorrected
+            two-parameter form (C_pr·Qpr/(ρr), C_pr=1.19e-3 kg/m²) that
+            omitted a factor of 2 present in the convention that constant
+            is normally paired with. Verified against Burns, Lamy & Soter
+            (1979) Icarus 40, 1, Eq. 19 directly — all reported grain radii
+            in v2.4 were too LARGE by a factor of 2.07. See
+            comet_tail_analyzer.py CHANGELOG for the full derivation.
+          • β-table column header "Size" → "Radius"; all "grain size"
+            labels in the β panel and analysis report corrected to "grain
+            radius" (the value was always a radius, but was unlabelled
+            ambiguously — risk of being misread as diameter, doubling the
+            error on top of the formula fix above).
+          • Added anti-velocity arrow (−v): the negative of the comet's
+            heliocentric velocity, projected onto the sky, drawn alongside
+            the existing Sun-direction arrow on every plot/overlay. Shows
+            how far a real (non-zero-ejection-velocity) tail is expected to
+            lean from the pure antisolar line — same convention used by
+            Moreno (2025, A&A 695 A263) and Mariblanca-Escalona et al.
+            (2026, MNRAS) in their published tail images.
+          • Added isophote overlay: optional surface-brightness contours
+            traced directly from the loaded image, toggleable alongside
+            the syndyne/synchrone/orbit checkboxes, for direct visual
+            comparison between observed tail morphology and the model
+            curves (overlay mode only). Gaussian-smooths the luminance
+            and uses an 85th-percentile noise floor before contouring —
+            without this, real (noisy) exposures produce solid green
+            speckle across the whole frame instead of clean isophote
+            curves, since contour() draws a segment at every pixel-noise
+            crossing of a level. Levels-count and smoothing-radius are
+            both adjustable sliders in the DISPLAY panel.
+          • Added ORBIT VIEW window: a new 3D diagram of the comet's
+            position on its actual orbital ellipse (Sun as a yellow
+            circle at the focus, perihelion marked, Earth's orbit for
+            scale, drop-lines to the ecliptic plane, click-drag to
+            rotate) at the observation epoch — complements the existing
+            orbital-path-on-sky overlay, which only shows the projected
+            tail-axis direction, not where the comet physically sits in
+            its orbit or how far out of the ecliptic plane it currently
+            is.
+
     v2.4  • Pairs with comet_tail_analyzer.py v2.4.
           • PRESET tab: obs_date field was missing from layout (invisible) —
             fixed; _on_comet_selected(0) now called on init to seed first
@@ -52,7 +379,7 @@
 =============================================================================
 """
 
-__version__ = "2.4"
+__version__ = "2.5"
 
 import sys, os, warnings, csv
 warnings.filterwarnings("ignore")
@@ -67,7 +394,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QFileDialog, QStatusBar, QProgressBar, QMessageBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QTextEdit,
     QDialog, QDialogButtonBox, QFormLayout, QSizePolicy, QMenuBar,
-    QMenu,
+    QMenu, QRadioButton,
 )
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal, QTimer, QSize,
@@ -528,9 +855,66 @@ STYLE = _build_style(THEME_DARK)
 # ─────────────────────────────────────────────────────────────────────────────
 SYNDYNE_COLORS = ["#ff4444","#ff6b35","#ff8c42","#ffaa33","#ffcc22","#ffdd60","#ffe89a"]
 SYNC_COLORS    = ["#ffd700","#f0b800","#e09a00","#cc8000","#b86800","#a05000","#883a00"]
+ISOPHOTE_COLOR = "#60e0a0"   # cool green — distinct from all syndyne/sync/sun/orbit colors
 BG      = T["mpl_bg"]
 PANEL_BG= T["panel_bg"]
 MF      = "DejaVu Sans"   # clean sans-serif for plot labels
+
+
+def _compute_isophote_levels(img_arr, n_levels: int = 6, smooth_sigma: float = 2.0):
+    """
+    Build surface-brightness contour levels directly from a loaded image,
+    without requiring photometric calibration (v3.0 isophote overlay).
+
+    Since we have no zeropoint for an arbitrary user image, we approximate
+    the conventional "isophotes spaced evenly in magnitude" look (e.g.
+    Mariblanca-Escalona et al. 2026, Fig. 1: 0.5-mag spacing) by using
+    LOG-spaced levels in raw pixel intensity — magnitude is itself
+    -2.5·log10(intensity), so even log-intensity spacing is a reasonable,
+    calibration-free stand-in for even magnitude spacing.
+
+    v3.0: real astronomical exposures have substantial pixel-to-pixel
+    shot/read noise. Contouring the raw frame makes matplotlib draw a tiny
+    line segment at every noise fluctuation that crosses a level — over an
+    entire noisy frame this looks like solid speckle rather than clean
+    isophote curves (this is exactly what happens without smoothing; no
+    isophote-fitting tool contours a raw frame for this reason). Two
+    changes fix it:
+      1. Gaussian-smooth the luminance first (kills sub-PSF pixel noise
+         while preserving the coma/tail's real, much larger-scale shape).
+      2. Raise the lower percentile floor well above the noise floor
+         (85th, not 55th) so contours don't trace the dark sky background
+         at all — only the genuinely bright coma/tail structure.
+
+    Returns (luminance_2d, levels_array), or (None, None) if the image
+    doesn't have enough usable signal to contour meaningfully.
+    """
+    if img_arr is None:
+        return None, None
+    arr = img_arr
+    if arr.ndim == 3:
+        # Rec.601 luminance from RGB(A); alpha channel (if any) is ignored
+        weights = np.array([0.299, 0.587, 0.114])
+        lum = arr[..., :3].astype(float) @ weights
+    else:
+        lum = arr.astype(float)
+
+    if smooth_sigma > 0:
+        try:
+            from scipy.ndimage import gaussian_filter
+            lum = gaussian_filter(lum, sigma=smooth_sigma)
+        except Exception:
+            pass   # scipy missing/failed — fall back to unsmoothed (still works, just noisier)
+
+    finite = lum[np.isfinite(lum)]
+    if finite.size < 100:
+        return None, None
+    lo, hi = np.percentile(finite, [85.0, 99.7])
+    if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
+        return lum, None
+    levels = np.geomspace(max(lo, 1e-6), hi, n_levels)
+    return lum, levels
+
 
 def apply_theme(theme_name: str, app: "QApplication"):
     """Switch application theme at runtime."""
@@ -630,7 +1014,9 @@ class PlotCanvas(QWidget):
         self.nuc_y   = 0.0
         self.au_per_px = 0.001
         self.north_pa  = 0.0
-        self._vis = dict(synd=True, sync=True, orbit=True, lw=1.5, alpha=0.85)
+        self._vis = dict(synd=True, sync=True, orbit=True, isophote=False,
+                         isophote_levels=6, isophote_smooth=2.0, lw=1.5, alpha=0.85,
+                         orbit_lw=1.0, orbit_alpha=0.7)
         self._draw_empty()
 
     # ── Nucleus picking ───────────────────────────────────────────────────
@@ -749,7 +1135,7 @@ class PlotCanvas(QWidget):
         self.canvas.draw_idle()
 
     # ── Main draw ─────────────────────────────────────────────────────────
-    def draw_model(self, model, img_arr=None):
+    def draw_model(self, model, img_arr=None, fixed_xlim=None, fixed_ylim=None):
         self._model  = model
         self._imgArr = img_arr
         self.ax.clear()
@@ -775,6 +1161,21 @@ class PlotCanvas(QWidget):
             self.ax.set_ylim(h_img, 0)
             self.ax.set_xlabel("X (pixels)", color="#3a6080", fontfamily=MF)
             self.ax.set_ylabel("Y (pixels)", color="#3a6080", fontfamily=MF)
+
+            # ── Isophote overlay (v3.0) — traced from the loaded image ────
+            if self._vis.get("isophote", False):
+                lum, lvl = _compute_isophote_levels(
+                    img_arr,
+                    n_levels=self._vis.get("isophote_levels", 6),
+                    smooth_sigma=self._vis.get("isophote_smooth", 2.0))
+                if lum is not None and lvl is not None and len(lvl) >= 2:
+                    try:
+                        self.ax.contour(lum, levels=lvl, origin="upper",
+                                        extent=[0, w_img, h_img, 0],
+                                        colors=ISOPHOTE_COLOR,
+                                        linewidths=0.6, alpha=0.75, zorder=1)
+                    except Exception:
+                        pass   # malformed/flat image — skip silently, never block the plot
 
             def to_px(xi, eta):
                 return cta.sky_to_pixel(xi, eta, self.nuc_x, self.nuc_y,
@@ -848,7 +1249,16 @@ class PlotCanvas(QWidget):
             for s in model["synchrones"]:
                 all_xi  += list(s["xi"] [np.isfinite(s["xi"])]  * K)
                 all_eta += list(s["eta"][np.isfinite(s["eta"])] * K)
-            if len(all_xi) > 1:
+            if fixed_xlim is not None and fixed_ylim is not None:
+                # v3.0 Animator: lock the frame to a caller-specified size
+                # (Fixed FOV in degrees, or Fixed distance in AU passed
+                # through the same K-scaled xi/eta units) instead of
+                # auto-fitting per frame — auto-fit would zoom out as the
+                # tail grows, hiding the very change the animation exists
+                # to show.
+                self.ax.set_xlim(*fixed_xlim)
+                self.ax.set_ylim(*fixed_ylim)
+            elif len(all_xi) > 1:
                 xr  = np.percentile(all_xi,  [2, 98])
                 yr  = np.percentile(all_eta, [2, 98])
                 pad = 0.12
@@ -857,17 +1267,39 @@ class PlotCanvas(QWidget):
                 # East LEFT = inverted x-axis (E is positive xi, appears left)
                 self.ax.set_xlim(xr[1]+dx, xr[0]-dx)
                 self.ax.set_ylim(yr[0]-dy, yr[1]+dy)
+            # Equal aspect so 1° in RA-direction always renders as the same
+            # screen length as 1° in Dec-direction (see CHANGELOG v3.0 for
+            # the bug this fixes: without it, the main window and Animator
+            # rendered the same model at different distortions because
+            # their canvas widgets have different pixel aspect ratios).
+            #
+            # adjustable mode differs by use case:
+            #   - Animator (fixed_xlim/fixed_ylim given): 'box' — the whole
+            #     point of "Fixed FOV"/"Fixed distance" is an EXACT
+            #     requested angular size, so any aspect mismatch is taken
+            #     up as blank padding, never by silently widening the FOV.
+            #   - Main window auto-fit (no fixed_xlim/fixed_ylim): 'datalim'
+            #     — there's no precision promise to keep here, so instead
+            #     of padding with empty space, extend whichever axis range
+            #     is needed to fill the canvas completely. Far less
+            #     confusing than a tiny plot adrift in a sea of black with
+            #     the legend now looming huge over it.
+            adj = 'box' if (fixed_xlim is not None and fixed_ylim is not None) else 'datalim'
+            self.ax.set_aspect('equal', adjustable=adj)
+            # set_aspect() with adjustable='datalim' only computes the
+            # final, box-filling data limits LAZILY at actual draw time —
+            # so anything below that calls self.ax.get_xlim()/get_ylim()
+            # right after (the N/E compass position, the starfield, label
+            # placement) would otherwise read the stale PRE-adjustment
+            # limits, not the final ones. apply_aspect() forces that
+            # computation to happen now instead of later.
+            self.ax.apply_aspect()
             self.ax.axhline(0, color="#1a2a40", lw=0.7, zorder=1)
             self.ax.axvline(0, color="#1a2a40", lw=0.7, zorder=1)
             self.ax.set_xlabel("← East  ·  Δ (°)  ·  West →",
                                color="#3a6080", fontsize=9, fontfamily=MF)
             self.ax.set_ylabel("↑  Δ North (°)",
                                color="#3a6080", fontsize=9, fontfamily=MF)
-            # Starfield (uses sorted xlim to avoid issues with inverted axis)
-            rng = np.random.default_rng(42)
-            xl  = sorted(self.ax.get_xlim()); yl = self.ax.get_ylim()
-            sx  = rng.uniform(*xl, 200); sy = rng.uniform(*yl, 200)
-            self.ax.scatter(sx, sy, s=0.3, c="white", alpha=0.2, zorder=0)
 
             def prep(xi_arr, eta_arr):
                 # Convert AU → degrees for standalone display
@@ -930,8 +1362,10 @@ class PlotCanvas(QWidget):
             else:
                 xs = op[:,0] * K
                 ys = op[:,1] * K
-            self.ax.plot(xs, ys, "--", color="#2050a0", lw=0.9,
-                         alpha=0.5, zorder=2, label="Orbital path")
+            self.ax.plot(xs, ys, "--", color="#2050a0",
+                         lw=self._vis.get("orbit_lw", 1.0),
+                         alpha=self._vis.get("orbit_alpha", 0.7),
+                         zorder=2, label="Orbital path")
 
         def _truncate_at_turnaround(xv, yv, nuc_x, nuc_y):
             """
@@ -1076,14 +1510,9 @@ class PlotCanvas(QWidget):
 
         # ── Sun direction arrow ───────────────────────────────────────────
         # sun_dir = (xi, eta) pointing FROM COMET TOWARD SUN
-        # JPL Horizons PsAng = PA of anti-solar direction = PA toward Sun + 180°
         sun_xi, sun_eta = model["sun_dir"]
         slen = np.sqrt(sun_xi**2 + sun_eta**2)
         if slen > 1e-10:
-            # Compute PsAng (anti-solar = dust tail direction)
-            # PA measured from North (eta) toward East (xi): atan2(xi, eta)
-            PA_to_sun  = np.degrees(np.arctan2(sun_xi/slen, sun_eta/slen)) % 360
-            PsAng      = (PA_to_sun + 180.0) % 360   # anti-solar (Horizons PsAng)
 
             if overlay:
                 sc = 60 * self.au_per_px
@@ -1110,16 +1539,34 @@ class PlotCanvas(QWidget):
                          "☀", color="#ffe030", fontsize=13,
                          ha="center", zorder=7)
 
-            # PsAng label (standalone only)
-            if not overlay:
-                xl3 = self.ax.get_xlim(); yl3 = self.ax.get_ylim()
-                # bottom-left in screen = West+South = xr[0]-dx (right data), yr[0]-dy
-                lx = xl3[0] + (xl3[1]-xl3[0])*0.04   # right side (West) slightly inside
-                ly = yl3[0] + (yl3[1]-yl3[0])*0.06
-                self.ax.text(lx, ly,
-                             f"PsAng = {PsAng:.1f}°\n(anti-solar / tail dir)",
-                             color="#888830", fontsize=7.5, ha="right",
-                             fontfamily=MF, va="bottom", zorder=8)
+        # ── Anti-velocity arrow (v3.0) ──────────────────────────────────────
+        # antivel_dir = −(heliocentric velocity), projected onto the sky.
+        # A real (non-zero-ejection-velocity) tail leans toward this
+        # direction rather than the pure antisolar line — same convention
+        # used by Moreno (2025) and Mariblanca-Escalona et al. (2026) to
+        # label their published tail images.
+        avx, avy = model.get("antivel_dir", (0.0, 0.0))
+        avlen = np.sqrt(avx**2 + avy**2)
+        if avlen > 1e-10:
+            if overlay:
+                sc = 60 * self.au_per_px
+                avx_end, avy_end = to_px(avx/avlen*sc, avy/avlen*sc)
+                avx_start, avy_start = self.nuc_x, self.nuc_y
+            else:
+                xl2 = self.ax.get_xlim()
+                sc  = abs(xl2[1] - xl2[0]) * 0.13
+                avx_end   = (avx/avlen) * sc
+                avy_end   = (avy/avlen) * sc
+                avx_start = 0; avy_start = 0
+
+            self.ax.annotate("", xy=(avx_end, avy_end),
+                             xytext=(avx_start, avy_start),
+                             arrowprops=dict(arrowstyle="->",
+                                             color="#ff5078", lw=1.8), zorder=6)
+            self.ax.text(avx_end + (avx_end - avx_start)*0.14,
+                         avy_end + (avy_end - avy_start)*0.14,
+                         "−v", color="#ff5078", fontsize=10,
+                         fontfamily=MF, ha="center", zorder=7)
 
         # Nucleus
         nx = self.nuc_x if overlay else 0.0
@@ -1205,8 +1652,13 @@ class PlotCanvas(QWidget):
         if self._vis["orbit"]:
             handles.append(Line2D([0],[0], color="#2050a0", lw=0.9,
                                   ls="--", label="Orbital path"))
+        if self._vis.get("isophote", False) and overlay:
+            handles.append(Line2D([0],[0], color=ISOPHOTE_COLOR, lw=1.2,
+                                  label="Isophotes (image)"))
         handles.append(Line2D([0],[0], color="#ffe030", lw=1.5,
                               marker=">", ms=7, label="Sun direction"))
+        handles.append(Line2D([0],[0], color="#ff5078", lw=1.4,
+                              marker=">", ms=6, label="Anti-velocity (−v)"))
         if handles:
             self.ax.legend(handles=handles, loc="lower left", fontsize=8,
                            framealpha=0.2, facecolor="#060b14",
@@ -1241,6 +1693,7 @@ class ControlPanel(QScrollArea):
     compute_requested = pyqtSignal(dict, float, list, list, int, int)
     fetch_requested   = pyqtSignal(str, str)
     image_loaded      = pyqtSignal(object)   # object allows None or ndarray
+    comet_ready       = pyqtSignal(dict)     # emitted whenever _comet_el is freshly set
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1438,17 +1891,25 @@ class ControlPanel(QScrollArea):
         self.chk_synd  = QCheckBox("Syndynes (β = const)")
         self.chk_sync  = QCheckBox("Synchrones (age = const)")
         self.chk_orbit = QCheckBox("Orbital path")
+        self.chk_isophote = QCheckBox("Isophotes (from image)")
         self.chk_synd.setChecked(True)
         self.chk_sync.setChecked(True)
         self.chk_orbit.setChecked(True)
+        self.chk_isophote.setChecked(False)
         self.chk_synd.setStyleSheet("color:#ff7070;")
         self.chk_sync.setStyleSheet("color:#ffd060;")
         self.chk_orbit.setStyleSheet("color:#4a8adf;")
-        for w in [self.chk_synd, self.chk_sync, self.chk_orbit]:
+        self.chk_isophote.setStyleSheet("color:#60e0a0;")
+        self.chk_isophote.setToolTip(
+            "Trace surface-brightness contours directly from the loaded\n"
+            "image (overlay mode only) for direct comparison between the\n"
+            "observed tail morphology and the model curves. (v3.0)")
+        for w in [self.chk_synd, self.chk_sync, self.chk_orbit, self.chk_isophote]:
             gd.addWidget(w)
 
+        gd.addWidget(QLabel("Syndynes/Synchrones:"))
         row_lw = QHBoxLayout()
-        row_lw.addWidget(QLabel("Line width"))
+        row_lw.addWidget(QLabel("  Width"))
         self.lw_slider = QSlider(Qt.Orientation.Horizontal)
         self.lw_slider.setRange(5, 50); self.lw_slider.setValue(15)
         self.lw_label  = QLabel("1.5")
@@ -1457,13 +1918,68 @@ class ControlPanel(QScrollArea):
         gd.addLayout(row_lw)
 
         row_op = QHBoxLayout()
-        row_op.addWidget(QLabel("Opacity  "))
+        row_op.addWidget(QLabel("  Opacity"))
         self.op_slider = QSlider(Qt.Orientation.Horizontal)
         self.op_slider.setRange(10, 100); self.op_slider.setValue(85)
         self.op_label  = QLabel("0.85")
         self.op_slider.valueChanged.connect(lambda v: self.op_label.setText(f"{v/100:.2f}"))
         row_op.addWidget(self.op_slider); row_op.addWidget(self.op_label)
         gd.addLayout(row_op)
+
+        # ── Orbital-path-specific width/opacity (v3.0) ────────────────────
+        # Previously hardcoded at lw=0.9/alpha=0.5 regardless of the
+        # general sliders above (which only affect syndynes/synchrones) —
+        # against a busy starfield/isophote background that combination
+        # is nearly invisible, with no way to turn it up.
+        gd.addWidget(QLabel("Orbital path:"))
+        row_orbit_lw = QHBoxLayout()
+        row_orbit_lw.addWidget(QLabel("  Width"))
+        self.orbit_lw_slider = QSlider(Qt.Orientation.Horizontal)
+        self.orbit_lw_slider.setRange(5, 50); self.orbit_lw_slider.setValue(10)
+        self.orbit_lw_label  = QLabel("1.0")
+        self.orbit_lw_slider.valueChanged.connect(
+            lambda v: self.orbit_lw_label.setText(f"{v/10:.1f}"))
+        row_orbit_lw.addWidget(self.orbit_lw_slider); row_orbit_lw.addWidget(self.orbit_lw_label)
+        gd.addLayout(row_orbit_lw)
+
+        row_orbit_op = QHBoxLayout()
+        row_orbit_op.addWidget(QLabel("  Opacity"))
+        self.orbit_op_slider = QSlider(Qt.Orientation.Horizontal)
+        self.orbit_op_slider.setRange(10, 100); self.orbit_op_slider.setValue(70)
+        self.orbit_op_label  = QLabel("0.70")
+        self.orbit_op_slider.valueChanged.connect(
+            lambda v: self.orbit_op_label.setText(f"{v/100:.2f}"))
+        row_orbit_op.addWidget(self.orbit_op_slider); row_orbit_op.addWidget(self.orbit_op_label)
+        gd.addLayout(row_orbit_op)
+
+        # ── Isophote-specific controls (v3.0) ─────────────────────────────
+        row_isolvl = QHBoxLayout()
+        row_isolvl.addWidget(QLabel("Isophote levels"))
+        self.isolvl_slider = QSlider(Qt.Orientation.Horizontal)
+        self.isolvl_slider.setRange(3, 15); self.isolvl_slider.setValue(3)
+        self.isolvl_label  = QLabel("3")
+        self.isolvl_slider.valueChanged.connect(
+            lambda v: self.isolvl_label.setText(str(v)))
+        row_isolvl.addWidget(self.isolvl_slider); row_isolvl.addWidget(self.isolvl_label)
+        gd.addLayout(row_isolvl)
+
+        row_isosm = QHBoxLayout()
+        row_isosm.addWidget(QLabel("Isophote smoothing (px)"))
+        self.isosm_slider = QSlider(Qt.Orientation.Horizontal)
+        self.isosm_slider.setRange(0, 60); self.isosm_slider.setValue(60)
+        self.isosm_label  = QLabel("6.0")
+        self.isosm_slider.valueChanged.connect(
+            lambda v: self.isosm_label.setText(f"{v/10:.1f}"))
+        row_isosm.addWidget(self.isosm_slider); row_isosm.addWidget(self.isosm_label)
+        gd.addLayout(row_isosm)
+        isosm_hint = QLabel(
+            "Real exposures need smoothing >0 — contouring raw pixel noise\n"
+            "looks like speckle, not clean isophote curves. Increase if\n"
+            "contours still look noisy; decrease if the coma looks blobby.")
+        isosm_hint.setStyleSheet("color:#2a5060; font-size:9px;")
+        isosm_hint.setWordWrap(True)
+        gd.addWidget(isosm_hint)
+
         vbox.addWidget(grp_disp)
 
         # ── Image overlay (compact – full config in dialog) ──────────────
@@ -1492,30 +2008,30 @@ class ControlPanel(QScrollArea):
         self.au_px_spin = self._dspin(0.001, 9, 0.000001)
         self.npa_spin   = self._dspin(0.0, 2, 0.5)
         self.npa_hint   = QLabel("")
-        self.sl_lo      = QSlider(Qt.Orientation.Horizontal)
-        self.sl_hi      = QSlider(Qt.Orientation.Horizontal)
-        self.sl_k       = QSlider(Qt.Orientation.Horizontal)
-        self.sl_gamma   = QSlider(Qt.Orientation.Horizontal)
-        self.sl_lo.setRange(0,500);     self.sl_lo.setValue(450)   # 4.50%
-        self.sl_hi.setRange(9000,10000); self.sl_hi.setValue(9850)  # 98.50%
-        self.sl_k.setRange(1,200);      self.sl_k.setValue(200)    # 2.00
-        self.sl_gamma.setRange(50,300); self.sl_gamma.setValue(300) # 3.00
+        self.sl_contrast  = QSlider(Qt.Orientation.Horizontal)
+        self.sl_intensity = QSlider(Qt.Orientation.Horizontal)
+        self.sl_contrast.setRange(-1000, 1000);  self.sl_contrast.setValue(0)
+        self.sl_intensity.setRange(-1000, 1000); self.sl_intensity.setValue(0)
         self.btn_pick_nuc  = QPushButton("⊕  CLICK NUCLEUS ON PLOT")
         self.btn_rot_nup   = QPushButton("↻  ROTATE N-UP / E-LEFT")
         self.rot_status    = QLabel("")
         self.btn_auto_stretch = QPushButton("✨  AUTO STRETCH")
-        self.btn_auto_stretch.setToolTip("Automatically compute optimal Shadow/Highlight from image histogram")
-        self.btn_restretch = QPushButton("↺  APPLY STRETCH")
+        self.btn_auto_stretch.setToolTip("Automatically compute a reasonable starting Contrast/Intensity from the image histogram")
         self.btn_auto_stretch.clicked.connect(self._auto_stretch)
-        self.btn_restretch.clicked.connect(self._restretch)
+        # v3.0: live restretch — no more separate Apply button. Re-stretches
+        # and redraws on every slider tick (not just on release), which is
+        # cheap enough for typical comet-image sizes; if it ever feels
+        # sluggish on very large images, debounce with a short QTimer here.
+        self.sl_contrast.valueChanged.connect(self._restretch)
+        self.sl_intensity.valueChanged.connect(self._restretch)
         self.btn_rot_nup.clicked.connect(self._rotate_north_up)
         self.npa_spin.valueChanged.connect(self._update_npa_hint)
 
         # Give all stub widgets the hidden container as parent
         for w in [self.nuc_x_spin, self.nuc_y_spin, self.au_px_spin,
-                  self.npa_spin, self.npa_hint, self.sl_lo, self.sl_hi,
-                  self.sl_k, self.sl_gamma, self.btn_pick_nuc,
-                  self.btn_rot_nup, self.rot_status, self.btn_restretch]:
+                  self.npa_spin, self.npa_hint, self.sl_contrast, self.sl_intensity,
+                  self.btn_pick_nuc,
+                  self.btn_rot_nup, self.rot_status]:
             _stub_lay.addWidget(w)
 
         # btn_clear_img — must also have a parent, not be orphaned
@@ -1593,8 +2109,17 @@ class ControlPanel(QScrollArea):
         if not hasattr(self, '_img_dialog') or self._img_dialog is None:
             self._img_dialog = ImageSetupDialog(self)
         self._img_dialog.show()
-        self._img_dialog.raise_()
-        self._img_dialog.activateWindow()
+        # NOTE: raise_()/activateWindow() called synchronously right after
+        # show() can run before the OS has finished realizing the native
+        # window (HWND on Windows), leaving the dialog visible but not yet
+        # registered with the window manager as a normal draggable/
+        # focusable top-level window — opening a modal QFileDialog later
+        # would force the event loop to flush and "fix" it retroactively,
+        # which is why the symptom only appeared before an image was
+        # selected. Deferring via singleShot(0, ...) lets the event loop
+        # finish realizing the window first.
+        QTimer.singleShot(0, self._img_dialog.raise_)
+        QTimer.singleShot(0, self._img_dialog.activateWindow)
 
     def _toggle_theme(self):
         """Toggle dark/light theme — called from the ☀/☾ button in the header."""
@@ -1605,7 +2130,8 @@ class ControlPanel(QScrollArea):
 
     def _update_beta_hint(self):
         betas = self._parse_floats(self.beta_str.text())
-        hints = [f"β{b}→{cta.beta_to_size(b)}" for b in betas[:4]]
+        rho_d = getattr(self.window(), 'phys_params', {}).get('rho_d', 0.5)
+        hints = [f"β{b}→{cta.beta_to_size(b, rho_d)}" for b in betas[:4]]
         self.beta_hint.setText("  ".join(hints))
 
     def _update_psang_hint(self):
@@ -1664,6 +2190,7 @@ class ControlPanel(QScrollArea):
                 Omega=self.m_Om.value(), omega=self.m_om.value(),
                 T=self.m_T.text(), T_jd=T_jd, name=self.m_name.text(),
                 obs_jd=cta.date_to_jd(self.m_obs.text()))
+            self.comet_ready.emit(self._comet_el)
         except Exception as ex:
             QMessageBox.warning(self, "Input Error", str(ex))
 
@@ -1692,6 +2219,7 @@ class ControlPanel(QScrollArea):
         else:
             self.fetch_status.setText(msg)
             self.btn_fetch.setEnabled(True)
+        self.comet_ready.emit(self._comet_el)
 
     def on_fetch_error(self, msg):
         if getattr(self, '_fetch_source', '') == 'preset':
@@ -1816,40 +2344,71 @@ class ControlPanel(QScrollArea):
             return None, None
 
     def _stretch_raw(self, data: np.ndarray) -> np.ndarray:
-        """Apply current slider-based stretch to raw float32 FITS data → RGB uint8."""
-        lo_pct = self.sl_lo.value()    / 100.0   # e.g. 0.30
-        hi_pct = self.sl_hi.value()    / 100.0   # e.g. 99.98
-        k      = self.sl_k.value()     / 100.0   # asinh softness  e.g. 0.05
-        gamma  = self.sl_gamma.value() / 100.0   # gamma  e.g. 1.00
-        lo  = np.percentile(data, lo_pct)
-        hi  = np.percentile(data, hi_pct)
-        d   = np.clip(data, lo, hi)
-        d   = (d - lo) / (hi - lo + 1e-8)
-        d   = np.arcsinh(d / k) / np.arcsinh(1.0 / k)
-        if abs(gamma - 1.0) > 0.01:
-            d = np.power(np.clip(d, 1e-8, 1.0), gamma)
-        d   = np.clip(d, 0.0, 1.0)
+        """
+        Apply the current Contrast/Intensity stretch to raw float32 FITS
+        data → RGB uint8.
+
+        v3.0: simplified from 4 technical sliders (Shadow%/Highlight%/
+        Softness/Gamma) to 2 simple ones (Contrast, Intensity, both
+        -1000..1000), inspired by the simpler two-knob stretch UI in
+        comet-tracking viewers like Tycho Tracker. This is Claude's own
+        reparameterization of the same underlying asinh stretch, NOT a
+        reverse-engineered match of any other tool's exact internal
+        formula (no access to that) — tune the formula below if the
+        defaults don't feel right for your images.
+
+        Mapping:
+          Background level = median; noise scale = robust σ (1.4826×MAD).
+          INTENSITY shifts the black point relative to the background:
+            negative → black point pulled well below background, reveals
+            faint signal/coma (image looks brighter/more "exposed");
+            positive → black point pushed above background, only bright
+            cores survive. ±1000 spans roughly ∓15σ.
+          CONTRAST sets how wide the stretched range above black is:
+            higher → narrower range → steeper, more contrasty; lower/
+            negative → wider range → flatter, more gradual. ±1000 spans
+            a ×0.1 to ×10 multiplier on a fixed 40σ base width.
+          A fixed mild asinh softness (0.05) is kept internally — not
+          user-exposed, since the 2-knob goal was simplicity.
+        """
+        contrast  = self.sl_contrast.value()
+        intensity = self.sl_intensity.value()
+
+        med = float(np.median(data))
+        mad = float(np.median(np.abs(data - med)))
+        sigma = mad * 1.4826 + 1e-6
+
+        black = med + (intensity / 1000.0) * 15.0 * sigma
+        range_factor = 10.0 ** (-contrast / 1000.0)   # +1000→×0.1, -1000→×10
+        white = black + 40.0 * sigma * range_factor
+        if white <= black:
+            white = black + 1e-6
+
+        d = np.clip(data, black, white)
+        d = (d - black) / (white - black)
+        d = np.arcsinh(d / 0.05) / np.arcsinh(1.0 / 0.05)
+        d = np.clip(d, 0.0, 1.0)
         img8 = (d * 255).astype(np.uint8)
         from PIL import Image as PILImage
         return np.array(PILImage.fromarray(img8, "L").convert("RGB"))
 
     def _auto_stretch(self):
         """
-        Apply optimal default stretch settings for comet images.
-        Sets Shadow=4.50%, Highlight=98.50%, Softness=2.00, Gamma=3.00
+        Apply a reasonable default Contrast/Intensity for comet images:
+        push Intensity negative to reveal faint coma/tail above the
+        background, with Contrast also negative for a wider/flatter
+        stretch range (avoids clipping the faint signal Intensity just
+        revealed). These are starting points, not a derived optimum —
+        adjust by eye afterward.
         """
         if not hasattr(self, "_fits_raw") or self._fits_raw is None:
             QMessageBox.information(self, "Auto Stretch",
                 "No FITS image loaded. Auto stretch only works with FITS files.")
             return
-        
-        # Set optimal default values for comet imaging
-        self.sl_lo.setValue(450)      # Shadow: 4.50%
-        self.sl_hi.setValue(9850)     # Highlight: 98.50%
-        self.sl_k.setValue(200)       # Softness: 2.00
-        self.sl_gamma.setValue(300)   # Gamma: 3.00
-        
-        # Auto-apply stretch
+
+        self.sl_contrast.setValue(-150)
+        self.sl_intensity.setValue(-300)
+
         self._restretch()
 
     def _restretch(self):
@@ -1983,8 +2542,13 @@ class ControlPanel(QScrollArea):
             synd=self.chk_synd.isChecked(),
             sync=self.chk_sync.isChecked(),
             orbit=self.chk_orbit.isChecked(),
+            isophote=self.chk_isophote.isChecked(),
+            isophote_levels=self.isolvl_slider.value(),
+            isophote_smooth=self.isosm_slider.value()/10.0,
             lw=self.lw_slider.value()/10,
             alpha=self.op_slider.value()/100,
+            orbit_lw=self.orbit_lw_slider.value()/10,
+            orbit_alpha=self.orbit_op_slider.value()/100,
         )
 
     def get_overlay(self):
@@ -2015,7 +2579,7 @@ class InfoPanel(QWidget):
         vbox.setSpacing(0)
 
         # Thin header strip (stored so update_theme() can re-style it)
-        self.hdr = QLabel("  ANALYSIS")
+        self.hdr = QLabel("  INFO")
         self.hdr.setStyleSheet(
             f"background:{T['panel_bg']}; color:{T['text_muted']}; font-size:10px;"
             f"letter-spacing:2px; font-weight:bold; padding:6px 8px;"
@@ -2023,6 +2587,7 @@ class InfoPanel(QWidget):
         vbox.addWidget(self.hdr)
 
         self.tabs = QTabWidget()
+        self.tabs.setTabBarAutoHide(True)   # only INFO is left after v3.0's tab removals
         vbox.addWidget(self.tabs)
 
         # ── Tab 1 : INFO (Ephemeris + Orbital Elements) ──────────────────
@@ -2056,139 +2621,112 @@ class InfoPanel(QWidget):
             self._orb_key_lbs.append(lk)
             go.addWidget(lk,i,0); go.addWidget(lv,i,1); self.orb_labels[k] = lv
         v1.addWidget(grp_orb)
+
+        # ── ANIMATOR (v3.0: embedded in main window, not a popup) ────────
+        # Steps obs date across a range and plays back the resulting F-P
+        # model frames directly into the MAIN canvas — for spotting when
+        # the tail is widest/changing fastest (e.g. to plan imaging
+        # sessions). Orchestration (worker thread, frame cache, play
+        # timer, drawing) lives in MainWindow; this group box only holds
+        # the input widgets.
+        grp_anim = QGroupBox("ANIMATOR")
+        av = QVBoxLayout(grp_anim); av.setSpacing(6)
+
+        af = QFormLayout(); af.setSpacing(5)
+        self.anim_start = QLineEdit(cta.jd_to_str(cta.today_jd())[:10])
+        self.anim_end   = QLineEdit(cta.jd_to_str(cta.today_jd() + 360)[:10])
+        self.anim_step  = QDoubleSpinBox()
+        self.anim_step.setRange(0.1, 100.0)
+        self.anim_step.setDecimals(1)
+        self.anim_step.setValue(2.0)
+        self.anim_step.setSuffix(" d")
+        af.addRow("Start:", self.anim_start)
+        af.addRow("End:", self.anim_end)
+        af.addRow("Step:", self.anim_step)
+        av.addWidget(QLabel("Date range (YYYY-MM-DD):"))
+        av.addLayout(af)
+
+        size_hdr = QHBoxLayout()
+        self.anim_rb_fov  = QRadioButton("Fixed FOV")
+        self.anim_rb_dist = QRadioButton("Fixed dist.")
+        self.anim_rb_fov.setChecked(True)
+        self.anim_rb_fov.setToolTip(
+            "Locks the angular field of view (arcmin) — what you'd see "
+            "through a fixed camera/eyepiece FOV every night, including "
+            "the real effect of changing Earth-comet distance Δ.")
+        self.anim_rb_dist.setToolTip(
+            "Locks the physical size (AU) shown on screen, removing the "
+            "effect of changing Δ — for comparing the tail's actual "
+            "physical growth.")
+        size_hdr.addWidget(self.anim_rb_fov)
+        size_hdr.addWidget(self.anim_rb_dist)
+        av.addLayout(size_hdr)
+
+        size_row = QHBoxLayout()
+        self.anim_size = QDoubleSpinBox()
+        self.anim_size.setRange(0.01, 100000.0)
+        self.anim_size.setDecimals(3)
+        self.anim_size.setValue(600.0)   # matches Compute Model's default FOV
+        self.anim_size.setSuffix(" arcmin")
+        self.anim_btn_auto = QPushButton("Auto")
+        self.anim_btn_auto.setToolTip(
+            "Samples the date range and suggests a size that fits the "
+            "widest tail with ~20% margin.")
+        size_row.addWidget(QLabel("Full width:"))
+        size_row.addWidget(self.anim_size)
+        size_row.addWidget(self.anim_btn_auto)
+        av.addLayout(size_row)
+        self.anim_rb_fov.toggled.connect(
+            lambda c: self.anim_size.setSuffix(" arcmin" if c else " AU"))
+
+        self.anim_btn_compute = QPushButton("▶  COMPUTE FRAMES")
+        self.anim_btn_compute.setProperty("class", "primary")
+        av.addWidget(self.anim_btn_compute)
+        self.anim_progress = QProgressBar()
+        self.anim_progress.setTextVisible(False)
+        self.anim_progress.setMaximumHeight(8)
+        av.addWidget(self.anim_progress)
+
+        play_row = QHBoxLayout()
+        self.anim_btn_play = QPushButton("▶")
+        self.anim_btn_play.setEnabled(False)
+        self.anim_btn_play.setMaximumWidth(36)
+        self.anim_slider = QSlider(Qt.Orientation.Horizontal)
+        self.anim_slider.setEnabled(False)
+        play_row.addWidget(self.anim_btn_play)
+        play_row.addWidget(self.anim_slider, 1)
+        av.addLayout(play_row)
+
+        self.anim_lbl_frame = QLabel("No frames computed yet.")
+        self.anim_lbl_frame.setWordWrap(True)
+        self.anim_lbl_frame.setStyleSheet("font-size:10px;")
+        av.addWidget(self.anim_lbl_frame)
+
+        v1.addWidget(grp_anim)
         v1.addStretch()
         self._apply_info_label_styles()   # initial colour pass
         self.tabs.addTab(sa1, "INFO")
 
-        # ── Tab 2 : β TABLE ─────────────────────────────────────────────
-        sa2 = QScrollArea(); sa2.setWidgetResizable(True)
-        sa2.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        w2 = QWidget(); sa2.setWidget(w2)
-        v2 = QVBoxLayout(w2); v2.setContentsMargins(8,8,8,8); v2.setSpacing(6)
+        # v3.0: β TABLE and LIGHT CURVE tabs removed — both are now fully
+        # covered elsewhere with no loss of function: grain radius lives
+        # in Calculation > Dust particle radius… (self-contained, doesn't
+        # need a per-comet model), and the light curve (plot + H0/n) is
+        # shown directly by the View > Light curve… popup window, which
+        # already fetches COBS automatically. Keeping a thin duplicate
+        # status display here risked it silently drifting out of sync
+        # with whichever the user actually looked at.
 
-        hdr_lbl = QLabel("Select β values that match the observed tail:")
-        hdr_lbl.setStyleSheet(f"color:{T['text_muted']}; font-size:11px;")
-        hdr_lbl.setWordWrap(True)
-        self._beta_hdr_lbl = hdr_lbl   # theme ref
-        v2.addWidget(hdr_lbl)
+        # v3.0: ANALYSIS tab removed. Its Afρ-based dust-production
+        # report duplicated the standalone Calculation > Dust production
+        # rate… calculator added earlier in v3.0 — same formula
+        # (compute_dust_production_rate(), still in comet_tail_analyzer.py
+        # if a text-report version is wanted again later), just shown a
+        # second way. generate_dust_analysis() itself is left in place as
+        # a library function; only this GUI tab and its caller
+        # (_run_analysis/_menu_generate_analysis/the Calculation menu's
+        # "Generate analysis" item) were removed.
 
-        # Table: ✓ | β | Size | Effect
-        self.beta_table = QTableWidget(0, 4)
-        self.beta_table.setHorizontalHeaderLabels(["✓","β","Size","Effect"])
-        hh = self.beta_table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.beta_table.setColumnWidth(0, 28)
-        self.beta_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.beta_table.setAlternatingRowColors(True)
-        self.beta_table.verticalHeader().setVisible(False)
-        self.beta_table.setStyleSheet(
-            "QTableWidget{font-size:11px;}"
-            "QTableWidget::item{padding:3px 4px;}")
-        self.beta_table.setSelectionMode(
-            QTableWidget.SelectionMode.NoSelection)
-        v2.addWidget(self.beta_table)
-
-        note = QLabel("☑ Tick β values whose syndyne aligns with the observed tail.\n"
-                      "Selected β → grain sizes used in Analysis report.")
-        note.setStyleSheet(f"color:{T['text_muted']}; font-size:10px; padding:4px 0;")
-        note.setWordWrap(True)
-        self._beta_note_lbl = note   # theme ref
-        v2.addWidget(note)
-        v2.addStretch()
-        self.tabs.addTab(sa2, "β TABLE")
-
-        # ── Tab 3 : LIGHT CURVE ──────────────────────────────────────────
-        w4 = QWidget()
-        v4 = QVBoxLayout(w4); v4.setContentsMargins(8,8,8,8); v4.setSpacing(8)
-
-        # Buttons row
-        fetch_row = QHBoxLayout(); fetch_row.setSpacing(6)
-        self.btn_fetch_cobs = QPushButton("📡  FETCH COBS")
-        self.btn_fetch_cobs.setProperty("class","success")
-        self.btn_fetch_cobs.setEnabled(False)
-        self.btn_fetch_cobs.setMinimumHeight(34)
-        fetch_row.addWidget(self.btn_fetch_cobs)
-
-        self.btn_open_lc = QPushButton("📈  PLOT LC")
-        self.btn_open_lc.setProperty("class","primary")
-        self.btn_open_lc.setEnabled(False)
-        self.btn_open_lc.setMinimumHeight(34)
-        self.btn_open_lc.setToolTip("Open full light curve window")
-        fetch_row.addWidget(self.btn_open_lc)
-        v4.addLayout(fetch_row)
-
-        # H₀/n results display
-        res_grp = QGroupBox("PHOTOMETRIC PARAMETERS")
-        res_grid = QGridLayout(res_grp); res_grid.setSpacing(6)
-
-        lbl_h0 = QLabel("H₀"); lbl_h0.setStyleSheet(f"color:{T['text_muted']};font-size:11px;")
-        self._lbl_h0 = lbl_h0   # theme ref
-        self.val_h0 = QLabel("—")
-        self.val_h0.setStyleSheet(f"color:{T['text_value']};font-size:15px;font-weight:700;")
-        lbl_n = QLabel("n"); lbl_n.setStyleSheet(f"color:{T['text_muted']};font-size:11px;")
-        self._lbl_n = lbl_n     # theme ref
-        self.val_n = QLabel("—")
-        self.val_n.setStyleSheet(f"color:{T['text_value']};font-size:15px;font-weight:700;")
-        res_grid.addWidget(lbl_h0, 0, 0)
-        res_grid.addWidget(self.val_h0, 0, 1)
-        res_grid.addWidget(lbl_n, 0, 2)
-        res_grid.addWidget(self.val_n, 0, 3)
-        v4.addWidget(res_grp)
-
-        # Status/source label
-        self.cobs_lbl = QLabel("Press FETCH COBS to load light curve data")
-        self.cobs_lbl.setStyleSheet(f"color:{T['text_muted']}; font-size:10px;")
-        self.cobs_lbl.setWordWrap(True)
-        v4.addWidget(self.cobs_lbl)
-        v4.addStretch()
-        self.tabs.addTab(w4, "LIGHT CURVE")
-
-        # ── Tab 5 : ANALYSIS ─────────────────────────────────────────────
-        w5 = QWidget()
-        v5 = QVBoxLayout(w5); v5.setContentsMargins(6,6,6,6); v5.setSpacing(6)
-
-        # Afρ input row
-        afrho_row = QHBoxLayout()
-        afrho_row.addWidget(QLabel("Afρ (cm)"))
-        self.afrho_spin = QDoubleSpinBox()
-        self.afrho_spin.setRange(0, 1e6); self.afrho_spin.setDecimals(0)
-        self.afrho_spin.setValue(0); self.afrho_spin.setSpecialValueText("—")
-        self.afrho_spin.setSuffix(" cm")
-        self.afrho_spin.setToolTip(
-            "Afρ parameter measured from the image.\n"
-            "A'Hearn et al. (1984)  [cm]")
-        afrho_row.addWidget(self.afrho_spin)
-        v5.addLayout(afrho_row)
-
-        # Generate analysis button
-        self.btn_analyse = QPushButton("🔬  GENERATE ANALYSIS")
-        self.btn_analyse.setProperty("class","success")
-        self.btn_analyse.setEnabled(False)
-        v5.addWidget(self.btn_analyse)
-
-        # Analysis text output
-        self.analysis_text = QTextEdit()
-        self.analysis_text.setReadOnly(True)
-        self._apply_analysis_text_style()   # sets bg/border/color from T
-        self.analysis_text.setPlaceholderText(
-            "Compute model first, then click\n'GENERATE ANALYSIS'")
-        v5.addWidget(self.analysis_text)
-
-        # Copy button
-        self.btn_copy_analysis = QPushButton("📋  COPY TEXT")
-        self.btn_copy_analysis.clicked.connect(self._copy_analysis)
-        v5.addWidget(self.btn_copy_analysis)
-        self.tabs.addTab(w5, "ANALYSIS")
-
-
-    def _copy_analysis(self):
-        from PyQt6.QtWidgets import QApplication
-        QApplication.clipboard().setText(self.analysis_text.toPlainText())
-
-    def update_info(self, model, comet_el, betas):
+    def update_info(self, model, comet_el):
         info = model["info"]
         self.eph_labels["r☉"].setText(f"{info['r_helio']:.5f} AU")
         self.eph_labels["Δ"].setText(f"{info['r_geo']:.5f} AU")
@@ -2196,38 +2734,6 @@ class InfoPanel(QWidget):
         self.eph_labels["RA"].setText(f"{info['RA']:.4f}°")
         self.eph_labels["Dec"].setText(f"{info['Dec']:.4f}°")
         self.eph_labels["Date"].setText(info["obs_str"][:16])
-
-        # β TABLE with checkboxes
-        self._betas = betas   # store for get_selected_betas()
-        self.beta_table.setRowCount(len(betas))
-        effects = {0.001:"~orbital trail",0.005:"barely pushed",0.01:"slightly pushed",
-                   0.05:"moderately pushed",0.1:"pushed outward",
-                   0.3:"strongly pushed",0.6:"very strongly",1.0:"no gravity"}
-        for i, b in enumerate(betas):
-            eff = next((v for k,v in effects.items()
-                        if abs(b-k) < max(b*0.4, 0.002)), "pushed")
-            # Col 0: checkbox
-            chk = QTableWidgetItem()
-            chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk.setCheckState(Qt.CheckState.Unchecked)
-            chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.beta_table.setItem(i, 0, chk)
-            # Col 1: β value (coloured)
-            b_item = QTableWidgetItem(str(b))
-            b_item.setForeground(QColor(SYNDYNE_COLORS[i % len(SYNDYNE_COLORS)]))
-            b_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.beta_table.setItem(i, 1, b_item)
-            # Col 2: grain size
-            sz_item = QTableWidgetItem(cta.beta_to_size(b))
-            sz_item.setForeground(QColor(T["text_sec"]))
-            sz_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.beta_table.setItem(i, 2, sz_item)
-            # Col 3: effect
-            eff_item = QTableWidgetItem(eff)
-            eff_item.setForeground(QColor(T["text_muted"]))
-            eff_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self.beta_table.setItem(i, 3, eff_item)
-        self.beta_table.resizeRowsToContents()
 
         self.orb_labels["q"].setText(f"{comet_el['q']:.6f} AU")
         self.orb_labels["e"].setText(f"{comet_el['e']:.7f}")
@@ -2238,25 +2744,7 @@ class InfoPanel(QWidget):
         self.orb_labels["Source"].setText(comet_el.get("source", "JPL Horizons"))
         self.tabs.setCurrentIndex(0)
 
-    def get_selected_betas(self) -> list:
-        """Return list of β values ticked in the β table."""
-        sel = []
-        for i in range(self.beta_table.rowCount()):
-            chk = self.beta_table.item(i, 0)
-            if chk and chk.checkState() == Qt.CheckState.Checked:
-                try:
-                    b = float(self.beta_table.item(i, 1).text())
-                    sel.append(b)
-                except Exception: pass
-        return sel or getattr(self, '_betas', [])   # fallback: all betas
-
     # ── Theme helpers ──────────────────────────────────────────────────────
-    def _apply_analysis_text_style(self):
-        """Re-apply the analysis QTextEdit colours from the active theme."""
-        self.analysis_text.setStyleSheet(
-            f"background:{T['input_bg']}; border:1px solid {T['border']};"
-            f"border-radius:6px; color:{T['text']}; font-size:10px;")
-
     def _apply_info_label_styles(self):
         """Re-apply eph / orb key-value label colours from the active theme."""
         for lk in getattr(self, '_eph_key_lbs', []):
@@ -2269,37 +2757,15 @@ class InfoPanel(QWidget):
             lv.setStyleSheet(f"color:{T['text_value']}; font-weight:bold; font-size:11px;")
 
     def _apply_misc_label_styles(self):
-        """Re-apply β TABLE, LC, and header strip colours from the active theme."""
+        """Re-apply the header strip colour from the active theme."""
         # Header strip
         self.hdr.setStyleSheet(
             f"background:{T['panel_bg']}; color:{T['text_muted']}; font-size:10px;"
             f"letter-spacing:2px; font-weight:bold; padding:6px 8px;"
             f"border-bottom:1px solid {T['border']};")
-        # β TABLE labels
-        if hasattr(self, '_beta_hdr_lbl'):
-            self._beta_hdr_lbl.setStyleSheet(
-                f"color:{T['text_muted']}; font-size:11px;")
-        if hasattr(self, '_beta_note_lbl'):
-            self._beta_note_lbl.setStyleSheet(
-                f"color:{T['text_muted']}; font-size:10px; padding:4px 0;")
-        # LIGHT CURVE tab labels
-        if hasattr(self, '_lbl_h0'):
-            self._lbl_h0.setStyleSheet(f"color:{T['text_muted']}; font-size:11px;")
-        if hasattr(self, '_lbl_n'):
-            self._lbl_n.setStyleSheet(f"color:{T['text_muted']}; font-size:11px;")
-        if hasattr(self, 'val_h0'):
-            self.val_h0.setStyleSheet(
-                f"color:{T['text_value']}; font-size:15px; font-weight:700;")
-        if hasattr(self, 'val_n'):
-            self.val_n.setStyleSheet(
-                f"color:{T['text_value']}; font-size:15px; font-weight:700;")
-        if hasattr(self, 'cobs_lbl'):
-            self.cobs_lbl.setStyleSheet(
-                f"color:{T['text_muted']}; font-size:10px;")
 
     def update_theme(self):
         """Re-apply ALL theme-sensitive styles in the right panel."""
-        self._apply_analysis_text_style()
         self._apply_info_label_styles()
         self._apply_misc_label_styles()
 
@@ -2315,13 +2781,21 @@ class ImageSetupDialog(QDialog):
       - Nucleus position (manual + click)
       - Scale & Orientation (AU/px, North PA)
       - Rotate N-up / E-left
-      - FITS stretch (Shadow, Highlight, Softness, Gamma)
+      - FITS stretch (Contrast, Intensity)
       - Observed Ephemeris Override (PsAng, r☉, Δ, Phase)
     """
     def __init__(self, ctrl: "ControlPanel"):
         super().__init__(ctrl.window() if ctrl.window() else ctrl,
-                         Qt.WindowType.Tool |
-                         Qt.WindowType.WindowStaysOnTopHint)
+                         Qt.WindowType.Dialog |
+                         Qt.WindowType.WindowStaysOnTopHint |
+                         Qt.WindowType.WindowCloseButtonHint |
+                         Qt.WindowType.WindowTitleHint)
+        # NOTE: was Qt.WindowType.Tool, which on several window
+        # managers renders without a properly draggable title bar — the
+        # dialog could be opened but never moved. Qt.WindowType.Dialog
+        # gives a full, natively draggable title bar on every platform
+        # while WindowStaysOnTopHint keeps the original "floats above
+        # the main window" behavior intact.
         self.ctrl = ctrl
         self._sync_in_progress = False  # Flag to prevent infinite loops in ps_spin ↔ au_px_spin sync
         self.setWindowTitle("Image Setup & Calibration")
@@ -2457,16 +2931,11 @@ class ImageSetupDialog(QDialog):
             r.addWidget(lbl); r.addWidget(sl, 1); r.addWidget(vl)
             return r
 
-        vb.addLayout(sl_row("Shadow %",   ctrl.sl_lo,    0,500,   450,  100, "{:.2f}%"))
-        vb.addLayout(sl_row("Highlight %",ctrl.sl_hi,    9000,10000,9850,100,"{:.2f}%"))
-        vb.addLayout(sl_row("Softness",   ctrl.sl_k,     1,200,    200,  100, "{:.2f}"))
-        vb.addLayout(sl_row("Gamma",      ctrl.sl_gamma, 50,300,  300,  100, "{:.2f}"))
+        vb.addLayout(sl_row("Contrast",  ctrl.sl_contrast,  -1000, 1000, 0, 1, "{:.0f}"))
+        vb.addLayout(sl_row("Intensity", ctrl.sl_intensity, -1000, 1000, 0, 1, "{:.0f}"))
         
         # Auto Stretch + Apply Stretch buttons
-        stretch_btns = QHBoxLayout()
-        stretch_btns.addWidget(ctrl.btn_auto_stretch)
-        stretch_btns.addWidget(ctrl.btn_restretch)
-        vb.addLayout(stretch_btns)
+        vb.addWidget(ctrl.btn_auto_stretch)
 
         # ── Observed Ephemeris Override ───────────────────────────────────
         # ── Nucleus Position (moved to bottom) ────────────────────────────
@@ -2816,22 +3285,381 @@ class LCWindow(QDialog):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  ORBIT-POSITION WINDOW  (v3.0)
+# ─────────────────────────────────────────────────────────────────────────────
+class OrbitWindow(QDialog):
+    """
+    Standalone 3D orbit-position diagram window (v3.0).
+
+    Distinct from the "Orbital path" overlay already drawn on the main
+    canvas: that overlay shows the comet's path PROJECTED ONTO THE SKY
+    (used to judge tail-axis direction). This window shows where the
+    comet physically SITS in its orbit right now, in full 3D — Sun at
+    the focus (yellow circle), perihelion marked, Earth's orbit for
+    scale, drag-to-rotate — independent, safe matplotlib canvas, same
+    pattern as LCWindow.
+    """
+
+    def __init__(self, comet_el: dict, obs_jd: float, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"☄ Orbit Position — {comet_el.get('name','Comet')}")
+        self.setMinimumSize(680, 680)
+        self.resize(760, 760)
+        self.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.WindowCloseButtonHint |
+            Qt.WindowType.WindowMinMaxButtonsHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(10, 10, 10, 10)
+        vbox.setSpacing(6)
+
+        hdr = QLabel(f"{comet_el.get('name','Comet')}   |   "
+                     f"q={comet_el.get('q',0):.4f} AU   e={comet_el.get('e',0):.5f}")
+        hdr.setStyleSheet(
+            f"background:{T['panel_bg']}; color:{T['text_value']};"
+            f"font-size:13px; font-weight:700; padding:8px 12px;"
+            f"border-radius:6px; border:1px solid {T['border']};")
+        vbox.addWidget(hdr)
+
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_qtagg import (
+            FigureCanvasQTAgg as FC, NavigationToolbar2QT as NT)
+        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registers '3d' projection
+
+        self._fig = Figure(figsize=(7, 7))
+        self._fig.set_facecolor(T["mpl_bg"])
+        self._ax = self._fig.add_subplot(111, projection='3d')
+        self._canvas = FC(self._fig)
+        toolbar = NT(self._canvas, self)
+        vbox.addWidget(toolbar)
+        vbox.addWidget(self._canvas)
+
+        bot = QHBoxLayout()
+        note_lbl = QLabel("3D heliocentric view  ·  click-drag to rotate  ·  "
+                          "physical orbit position, not the sky-projected tail")
+        note_lbl.setStyleSheet(f"color:{T['text_muted']}; font-size:10px;")
+        btn_close = QPushButton("Close"); btn_close.setMaximumWidth(90)
+        btn_close.clicked.connect(self.close)
+        bot.addWidget(note_lbl); bot.addStretch(); bot.addWidget(btn_close)
+        vbox.addLayout(bot)
+
+        try:
+            diagram = cta.compute_orbit_diagram(comet_el, obs_jd)
+            cta.draw_orbit_diagram(self._ax, diagram, dark=(CURRENT_THEME == "dark"))
+            self._fig.tight_layout(pad=1.2)
+        except Exception as e:
+            self._ax.text2D(0.5, 0.5, f"Diagram error:\n{e}",
+                            ha='center', va='center',
+                            transform=self._ax.transAxes,
+                            color='#ff4444', fontsize=10)
+        self._canvas.draw()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  MAIN WINDOW
+# ─────────────────────────────────────────────────────────────────────────────
+def _model_extent_au(model) -> tuple[float, float]:
+    """Max |xi|, |eta| (AU) across every syndyne+synchrone in one
+    compute_model() frame, ignoring NaNs. Used by the Animator's
+    Auto-suggest button to size the frame to fit the widest tail in the
+    selected date range."""
+    max_xi = max_eta = 0.0
+    for s in model.get("syndynes", []) + model.get("synchrones", []):
+        xi = s.get("xi"); eta = s.get("eta")
+        if xi is not None and np.any(np.isfinite(xi)):
+            max_xi = max(max_xi, float(np.nanmax(np.abs(xi))))
+        if eta is not None and np.any(np.isfinite(eta)):
+            max_eta = max(max_eta, float(np.nanmax(np.abs(eta))))
+    return max_xi, max_eta
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  DUST PARTICLE RADIUS CALCULATOR  (v3.0) — standalone β→radius tool,
+#  Calculation > Dust particle radius… Needs only β/ρ_d/Qpr, no comet or
+#  model required, so it can be opened any time. Always delegates to
+#  beta_to_size() — never recomputes the formula itself — so this can
+#  never drift out of sync with any other place that reports a grain
+#  radius, the way the v2.4 duplicated-constant bug did.
+class GrainRadiusDialog(QDialog):
+    def __init__(self, parent, default_rho: float = 0.5):
+        super().__init__(parent)
+        self.setWindowTitle("Dust Particle Radius Calculator")
+        self.setMinimumWidth(440)
+        v = QVBoxLayout(self)
+
+        formula = QLabel(
+            "<b>r&nbsp;[µm]&nbsp;=&nbsp;0.574&nbsp;·&nbsp;Qpr&nbsp;/&nbsp;"
+            "(ρ&nbsp;[g/cm³]&nbsp;·&nbsp;β)</b><br>"
+            "<span style='color:#7090b0; font-size:10px;'>"
+            "Burns, Lamy &amp; Soter (1979), Icarus 40, 1, Eq. 19 — r is "
+            "the particle's RADIUS (not diameter).</span>")
+        formula.setWordWrap(True)
+        formula.setTextFormat(Qt.TextFormat.RichText)
+        formula.setStyleSheet(
+            "padding:10px; background:rgba(255,255,255,12); border-radius:4px;")
+        v.addWidget(formula)
+
+        # ── Mode toggle ──────────────────────────────────────────────
+        mode_row = QHBoxLayout()
+        self.rb_single = QRadioButton("Single β")
+        self.rb_range  = QRadioButton("β range")
+        self.rb_single.setChecked(True)
+        mode_row.addWidget(self.rb_single)
+        mode_row.addWidget(self.rb_range)
+        v.addLayout(mode_row)
+
+        self.single_box = QWidget()
+        sf = QFormLayout(self.single_box); sf.setContentsMargins(0,4,0,4)
+        self.sp_beta = QDoubleSpinBox()
+        self.sp_beta.setRange(1e-6, 100.0)
+        self.sp_beta.setDecimals(6)
+        self.sp_beta.setValue(0.01)
+        sf.addRow("β:", self.sp_beta)
+        v.addWidget(self.single_box)
+
+        self.range_box = QWidget()
+        rf = QFormLayout(self.range_box); rf.setContentsMargins(0,4,0,4)
+        self.sp_beta_min = QDoubleSpinBox()
+        self.sp_beta_min.setRange(1e-6, 100.0)
+        self.sp_beta_min.setDecimals(6)
+        self.sp_beta_min.setValue(0.001)
+        self.sp_beta_max = QDoubleSpinBox()
+        self.sp_beta_max.setRange(1e-6, 100.0)
+        self.sp_beta_max.setDecimals(6)
+        self.sp_beta_max.setValue(0.1)
+        rf.addRow("β min:", self.sp_beta_min)
+        rf.addRow("β max:", self.sp_beta_max)
+        v.addWidget(self.range_box)
+        self.range_box.setVisible(False)
+
+        self.rb_single.toggled.connect(self._on_mode_toggle)
+        for w in (self.sp_beta, self.sp_beta_min, self.sp_beta_max):
+            w.valueChanged.connect(self._recompute)
+
+        # ── Other parameters (defaulted, all editable) ──────────────
+        form2 = QFormLayout()
+        self.sp_rho = QDoubleSpinBox()
+        self.sp_rho.setRange(0.05, 5.0)
+        self.sp_rho.setDecimals(3)
+        self.sp_rho.setSingleStep(0.05)
+        self.sp_rho.setSuffix("  g/cm³")
+        self.sp_rho.setValue(default_rho)
+        self.sp_rho.valueChanged.connect(self._recompute)
+        form2.addRow("Grain density ρ:", self.sp_rho)
+        form2.addRow(QLabel(
+            "<i>default 0.5 g/cm³ — Fulle et al. (2016), in-situ Rosetta/67P</i>"))
+
+        self.sp_qpr = QDoubleSpinBox()
+        self.sp_qpr.setRange(0.01, 5.0)
+        self.sp_qpr.setDecimals(3)
+        self.sp_qpr.setSingleStep(0.1)
+        self.sp_qpr.setValue(1.0)
+        self.sp_qpr.valueChanged.connect(self._recompute)
+        form2.addRow("Scattering efficiency Qpr:", self.sp_qpr)
+        form2.addRow(QLabel(
+            "<i>default 1 — appropriate for grains large relative to the "
+            "wavelength (Burns et al. 1979)</i>"))
+        v.addLayout(form2)
+
+        # ── Output ───────────────────────────────────────────────────
+        self.lbl_result = QLabel()
+        self.lbl_result.setStyleSheet(
+            "font-size:15px; font-weight:bold; padding:10px; "
+            "background:rgba(60,120,200,30); border-radius:4px;")
+        self.lbl_result.setWordWrap(True)
+        v.addWidget(self.lbl_result)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(self.accept)
+        v.addWidget(btns)
+
+        self._recompute()
+
+    def _on_mode_toggle(self, _checked):
+        self.single_box.setVisible(self.rb_single.isChecked())
+        self.range_box.setVisible(not self.rb_single.isChecked())
+        self._recompute()
+
+    def _recompute(self):
+        rho = self.sp_rho.value()
+        qpr = self.sp_qpr.value()
+        if self.rb_single.isChecked():
+            b = self.sp_beta.value()
+            r = cta.beta_to_size(b, rho, qpr)
+            self.lbl_result.setText(f"β = {b:g}  →  grain radius = {r}")
+        else:
+            b_lo = min(self.sp_beta_min.value(), self.sp_beta_max.value())
+            b_hi = max(self.sp_beta_min.value(), self.sp_beta_max.value())
+            r_at_lo = cta.beta_to_size(b_lo, rho, qpr)   # smaller β → larger grain
+            r_at_hi = cta.beta_to_size(b_hi, rho, qpr)
+            self.lbl_result.setText(
+                f"β = {b_lo:g}  →  grain radius = {r_at_lo}\n"
+                f"β = {b_hi:g}  →  grain radius = {r_at_hi}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  DUST PRODUCTION RATE CALCULATOR  (v3.0) — standalone Afρ→Q_d tool,
+#  Calculation > Dust production rate… Requires an active comet (to get
+#  r_h from Horizons for the date entered); delegates to
+#  compute_dust_production_rate() — the same function generate_dust_
+#  analysis()'s inline Afρ section uses — so the two can never drift apart.
+class DustProductionDialog(QDialog):
+    def __init__(self, parent, comet_el: dict, obs_jd: float,
+                v_dust_default: float | None, p_v_default: float):
+        super().__init__(parent)
+        self.comet_el = comet_el
+        self.setWindowTitle(f"Dust Production Rate Calculator — {comet_el.get('name','Comet')}")
+        self.setMinimumWidth(460)
+        v = QVBoxLayout(self)
+
+        # Compute r_h up front (needed both to display it and, if no
+        # v_dust override was supplied, to seed v_dust from the r^-0.5 law).
+        try:
+            r_C, _ = cta.elem_to_state(comet_el, obs_jd)
+            self._r_h = float(cta.vmag(r_C))
+        except Exception:
+            self._r_h = 1.0
+
+        formula = QLabel(
+            "<b>Afρ_norm(1AU) = Afρ_obs · r_h²</b><br>"
+            "<b>Q_d ≈ Afρ_norm · v_dust / (2·p_v)</b>&nbsp;&nbsp;[kg/s]<br>"
+            "<span style='color:#7090b0; font-size:10px;'>"
+            "Order-of-magnitude estimate only (A'Hearn et al. 1984 Afρ "
+            "convention) — not a substitute for full coma photometry/Mie "
+            "modeling.</span>")
+        formula.setWordWrap(True)
+        formula.setTextFormat(Qt.TextFormat.RichText)
+        formula.setStyleSheet(
+            "padding:10px; background:rgba(255,255,255,12); border-radius:4px;")
+        v.addWidget(formula)
+
+        form = QFormLayout()
+
+        # Date — editable; r_h is re-derived from it via Horizons/orbital
+        # elements below and is NOT itself editable.
+        self.ed_date = QLineEdit(cta.jd_to_str(obs_jd)[:10])
+        self.ed_date.editingFinished.connect(self._refresh_rh)
+        form.addRow("Date (YYYY-MM-DD):", self.ed_date)
+
+        self.lbl_rh = QLabel(f"{self._r_h:.4f} AU")
+        self.lbl_rh.setStyleSheet("color:#a0c0e0;")
+        self.lbl_rh.setToolTip(
+            "Heliocentric distance for the date above, propagated from "
+            "the comet's orbital elements (Horizons) — read-only.")
+        form.addRow("r_h  (from Horizons):", self.lbl_rh)
+
+        self.sp_afrho = QDoubleSpinBox()
+        self.sp_afrho.setRange(0.0, 1_000_000.0)
+        self.sp_afrho.setDecimals(1)
+        self.sp_afrho.setValue(100.0)
+        self.sp_afrho.setSuffix("  cm")
+        self.sp_afrho.valueChanged.connect(self._recompute)
+        form.addRow("Afρ (observed):", self.sp_afrho)
+
+        v_dust_seed = (v_dust_default if v_dust_default is not None
+                      else round(0.1 * self._r_h ** -0.5, 4))
+        self.sp_vdust = QDoubleSpinBox()
+        self.sp_vdust.setRange(0.0001, 10.0)
+        self.sp_vdust.setDecimals(4)
+        self.sp_vdust.setValue(v_dust_seed)
+        self.sp_vdust.setSuffix("  km/s")
+        self.sp_vdust.valueChanged.connect(self._recompute)
+        vdust_row = QHBoxLayout()
+        vdust_row.addWidget(self.sp_vdust)
+        self.btn_auto_v = QPushButton("Reset to r_h-based default")
+        self.btn_auto_v.clicked.connect(
+            lambda: self.sp_vdust.setValue(round(0.1 * self._r_h ** -0.5, 4)))
+        vdust_row.addWidget(self.btn_auto_v)
+        form.addRow("Dust velocity v_dust:", vdust_row)
+        form.addRow(QLabel(
+            "<i>default from 0.1·r_h⁻⁰·⁵ km/s (empirical, no fixed "
+            "reference) — override with a measured value if available, "
+            "e.g. 29P quiescent ~0.01-0.05, outburst ~0.1-0.3 km/s "
+            "(Schambeau et al. 2017, 2019)</i>"))
+
+        self.sp_pv = QDoubleSpinBox()
+        self.sp_pv.setRange(0.01, 1.0)
+        self.sp_pv.setDecimals(3)
+        self.sp_pv.setValue(p_v_default)
+        self.sp_pv.valueChanged.connect(self._recompute)
+        form.addRow("Geometric albedo p_v:", self.sp_pv)
+        v.addLayout(form)
+
+        self.lbl_result = QLabel()
+        self.lbl_result.setStyleSheet(
+            "font-size:14px; font-weight:bold; padding:10px; "
+            "background:rgba(60,120,200,30); border-radius:4px;")
+        self.lbl_result.setWordWrap(True)
+        v.addWidget(self.lbl_result)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(self.accept)
+        v.addWidget(btns)
+
+        self._recompute()
+
+    def _refresh_rh(self):
+        try:
+            jd = cta.date_to_jd(self.ed_date.text().strip())
+            r_C, _ = cta.elem_to_state(self.comet_el, jd)
+            self._r_h = float(cta.vmag(r_C))
+            self.lbl_rh.setText(f"{self._r_h:.4f} AU")
+        except Exception as e:
+            self._r_h = None
+            self.lbl_rh.setText("— (bad date / elements)")
+        self._recompute()
+
+    def _recompute(self):
+        if self._r_h is None or self._r_h <= 0:
+            self.lbl_result.setText("Enter a valid date to get r_h first.")
+            return
+        qd = cta.compute_dust_production_rate(
+            self.sp_afrho.value(), self._r_h,
+            self.sp_vdust.value(), self.sp_pv.value())
+        self.lbl_result.setText(
+            f"Afρ_norm(1AU) = {qd['afrho_norm']:.0f} cm\n"
+            f"Q_d ≈ {qd['Qd_rough']:.1e} kg/s")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("☄ Comet Tail Analyzer  —  Finson–Probstein Model  ·  v2.4")
+        self.setWindowTitle("☄ Comet Tail Analyzer  —  Finson–Probstein Model  ·  v3.0")
         self.setMinimumSize(1300, 800)
         self.resize(1440, 900)
 
         self._model    = None
         self._comet_el = None
         self._worker   = None
+        self._cobs_data     = None
+        self._cobs_data_for = None # comet name self._cobs_data was fetched for
+        self._pending_cobs_callback  = None
+
+        # Embedded Animator (v3.0) state — see _anim_* methods below.
+        self._anim_frames    = []
+        self._anim_frame_idx = 0
+        self._anim_worker    = None
+        self._anim_timer     = QTimer(self)
+        self._anim_timer.timeout.connect(self._anim_advance_frame)
+
+        # Static literature defaults — seed the standalone calculators
+        # (Dust particle radius…, Dust production rate…) and the β-hint
+        # next to the β input field. Each calculator's own inputs are
+        # self-contained (v3.0) — nothing writes back here, so these stay
+        # fixed at their literature values for the whole session.
+        self.phys_params = {
+            'rho_d':  0.5,   # g/cm³, Fulle et al. (2016)
+            'v_dust': None,  # km/s, None = auto (0.1·r_h^-0.5 empirical law)
+            'p_v':    0.04,  # geometric albedo, SEPPCoN/Schambeau et al. 2021
+        }
 
         self._build_menu()
         self._build_ui()
         self._build_status()
+        self._wire_animator_controls()
 
     # ── Menu ──────────────────────────────────────────────────────────────
     def _build_menu(self):
@@ -2859,6 +3687,18 @@ class MainWindow(QMainWindow):
         act_reset.triggered.connect(lambda: self.canvas.canvas.toolbar.home())
         view_m.addAction(act_reset)
         view_m.addSeparator()
+        act_orbit_view = QAction("🪐  Orbit position diagram…", self)
+        act_orbit_view.setShortcut("Ctrl+O")
+        act_orbit_view.triggered.connect(self._open_orbit_window)
+        view_m.addAction(act_orbit_view)
+        act_lc_view = QAction("📈  Light curve…", self)
+        act_lc_view.setShortcut("Ctrl+L")
+        act_lc_view.setToolTip(
+            "Fetches COBS photometry automatically if not already fetched "
+            "for the selected comet.")
+        act_lc_view.triggered.connect(self._menu_open_lc)
+        view_m.addAction(act_lc_view)
+        view_m.addSeparator()
 
         # Theme submenu
         theme_m = view_m.addMenu("🎨  Theme")
@@ -2869,6 +3709,26 @@ class MainWindow(QMainWindow):
         self._act_light.triggered.connect(lambda: self._set_theme("light"))
         theme_m.addAction(self._act_dark)
         theme_m.addAction(self._act_light)
+
+        # Calculation (v3.0) — every standalone calculator/computation
+        # action consistently in one menu, mirroring View's "open a view"
+        # role. Each calculator owns its own physical-parameter inputs
+        # directly (ρ_d in Dust particle radius…, v_dust/p_v in Dust
+        # production rate…) rather than a separate combined dialog, so
+        # there's nothing else to put here first.
+        calc_m = mb.addMenu("Calculation")
+        act_radius = QAction("🪨  Dust particle radius…", self)
+        act_radius.setToolTip(
+            "β → grain radius calculator. Needs only β, ρ, Qpr — no "
+            "comet/model required.")
+        act_radius.triggered.connect(self._open_grain_radius_dialog)
+        calc_m.addAction(act_radius)
+        act_qd = QAction("💨  Dust production rate…", self)
+        act_qd.setToolTip(
+            "Afρ → Q_d calculator. r_h comes from the selected comet's "
+            "Horizons elements for a chosen date.")
+        act_qd.triggered.connect(self._open_dust_production_dialog)
+        calc_m.addAction(act_qd)
 
         # Help
         help_m = mb.addMenu("Help")
@@ -2893,6 +3753,7 @@ class MainWindow(QMainWindow):
         self.ctrl.compute_requested.connect(self._on_compute)
         self.ctrl.fetch_requested.connect(self._on_fetch)
         self.ctrl.image_loaded.connect(self._on_image_loaded)
+        self.ctrl.comet_ready.connect(self._on_comet_ready)
         splitter.addWidget(self.ctrl)
 
         # Center (canvas)
@@ -2926,6 +3787,323 @@ class MainWindow(QMainWindow):
             w.setStyleSheet("padding: 0 12px; color:#2a4060;")
             self.status.addPermanentWidget(w)
 
+    def _wire_animator_controls(self):
+        """Connect the embedded ANIMATOR group box (InfoPanel, INFO tab,
+        below ORBITAL ELEMENTS) to the _anim_* orchestration methods.
+        Called once after _build_ui() so self.info already exists."""
+        self.info.anim_btn_auto.clicked.connect(self._anim_auto_suggest)
+        self.info.anim_btn_compute.clicked.connect(self._anim_compute_frames)
+        self.info.anim_btn_play.clicked.connect(self._anim_toggle_play)
+        self.info.anim_slider.valueChanged.connect(self._anim_show_frame)
+
+
+    # ── v3.0: comet lookup + auto-chain helpers ─────────────────────────
+    def _active_comet_el(self) -> dict | None:
+        """The comet currently in play. ControlPanel's _comet_el is the
+        freshest signal — it updates the instant "Use this comet" is
+        clicked. self._comet_el (this window's own) only updates lazily
+        after a Compute Model run finishes, so if the user switches to a
+        different comet WITHOUT recomputing, self._comet_el would still
+        be holding the *previous* comet — which is exactly the bug where
+        Light curve…/Orbit… kept showing the old comet after switching.
+        self._comet_el is kept only as a last-resort fallback (e.g. if
+        ControlPanel somehow has none), never as the preferred source."""
+        return getattr(self.ctrl, "_comet_el", None) or self._comet_el
+
+    def _active_comet_name(self) -> str:
+        el = self._active_comet_el()
+        return el.get("name", "") if el else ""
+
+    def _on_comet_ready(self, el: dict):
+        """Fired by ControlPanel.comet_ready whenever a comet is freshly
+        selected/fetched (preset, FETCH JPL, or manual entry) — re-links
+        the embedded Animator to it: Start = comet's obs date, End =
+        Start+360d. Any frames already computed belonged to the PREVIOUS
+        comet, so they're invalidated (play/slider disabled) rather than
+        left showing stale data — Compute frames must be run again."""
+        obs_jd = el.get("obs_jd")
+        if obs_jd is not None:
+            self.ctrl.obs_date.setText(cta.jd_to_str(obs_jd)[:10])
+            self.info.anim_start.setText(cta.jd_to_str(obs_jd)[:10])
+            self.info.anim_end.setText(cta.jd_to_str(obs_jd + 360)[:10])
+
+        self._anim_timer.stop()
+        self._anim_frames    = []
+        self._anim_frame_idx = 0
+        self.info.anim_btn_play.setText("▶")
+        self.info.anim_btn_play.setEnabled(False)
+        self.info.anim_slider.setEnabled(False)
+        self.info.anim_slider.setRange(0, 0)
+        self.info.anim_lbl_frame.setText(
+            f"Linked to {el.get('name','this comet')} — "
+            f"click COMPUTE FRAMES to (re)build the animation.")
+
+    def _ensure_cobs_fetched(self, then_callback):
+        """Call then_callback(cobs_data) once COBS data exists for the
+        *current* comet — reusing the cache if it's still for the same
+        comet, otherwise fetching first. then_callback always eventually
+        fires (with cobs_data=None on failure/no comet) so callers never
+        hang waiting for it."""
+        name = self._active_comet_name()
+        if not name:
+            then_callback(None)
+            return
+        if self._cobs_data is not None and self._cobs_data_for == name:
+            then_callback(self._cobs_data)
+            return
+        self._pending_cobs_callback = then_callback
+        self._fetch_cobs(name)
+
+    def _open_grain_radius_dialog(self):
+        # No comet/model needed — the β→radius formula is comet-independent.
+        dlg = GrainRadiusDialog(self, self.phys_params['rho_d'])
+        dlg.exec()
+
+    def _open_dust_production_dialog(self):
+        el = self._active_comet_el()
+        if not el:
+            QMessageBox.warning(self, "No Comet",
+                                "Select or fetch a comet first — r_h is "
+                                "propagated from its orbital elements.")
+            return
+        obs_jd = self._current_obs_jd()
+        dlg = DustProductionDialog(
+            self, el, obs_jd,
+            self.phys_params['v_dust'], self.phys_params['p_v'])
+        dlg.exec()
+
+    def _menu_open_lc(self):
+        if not self._active_comet_name():
+            QMessageBox.warning(self, "No Comet",
+                                "Select or fetch a comet first.")
+            return
+        self._ensure_cobs_fetched(lambda d: self._open_lc_window())
+
+    def _anim_parse_range(self):
+        try:
+            start_jd = cta.date_to_jd(self.info.anim_start.text().strip())
+            end_jd   = cta.date_to_jd(self.info.anim_end.text().strip())
+        except Exception:
+            QMessageBox.warning(self, "Bad Date", "Enter dates as YYYY-MM-DD.")
+            return None, None
+        if end_jd <= start_jd:
+            QMessageBox.warning(self, "Bad Range",
+                                "End date must be after start date.")
+            return None, None
+        return start_jd, end_jd
+
+    def _anim_gather_inputs(self):
+        """(comet_el, betas, ages, max_age, n_pts) for the CURRENT comet/
+        model-panel settings, or None (with a warning already shown) if
+        anything's missing — gathered fresh on every Compute/Auto-suggest
+        click rather than once up front, since unlike the old popup this
+        panel stays open across comet/setting changes."""
+        el = self._active_comet_el()
+        if not el:
+            QMessageBox.warning(self, "No Comet",
+                                "Select or fetch a comet first.")
+            return None
+        betas = self.ctrl._parse_floats(self.ctrl.beta_str.text())
+        ages  = self.ctrl._parse_ints(self.ctrl.age_str.text())
+        if not betas or not ages:
+            QMessageBox.warning(self, "Bad Input",
+                "Enter at least one valid β value and synchrone age in "
+                "the model panel first.")
+            return None
+        return el, betas, ages, self.ctrl.max_age.value(), self.ctrl.n_pts.value()
+
+    def _anim_auto_suggest(self):
+        start_jd, end_jd = self._anim_parse_range()
+        if start_jd is None:
+            return
+        inputs = self._anim_gather_inputs()
+        if inputs is None:
+            return
+        el, betas, ages, max_age, n_pts = inputs
+        max_au = max_deg = 0.0
+        for jd in np.linspace(start_jd, end_jd, 5):
+            try:
+                m = cta.compute_model(el, float(jd), betas, ages, max_age,
+                                      min(n_pts, 60))
+            except Exception:
+                continue
+            ex, ey = _model_extent_au(m)
+            ext   = max(ex, ey)
+            r_geo = m["info"].get("r_geo", 1.0)
+            K     = (180.0 / np.pi) / r_geo
+            max_au  = max(max_au, ext)
+            max_deg = max(max_deg, ext * K)
+        if max_au <= 0:
+            QMessageBox.information(self, "Auto-suggest",
+                "Couldn't sample the model — check the comet/date range.")
+            return
+        margin = 1.2
+        if self.info.anim_rb_fov.isChecked():
+            self.info.anim_size.setValue(round(max_deg * 60 * 2 * margin, 2))
+        else:
+            self.info.anim_size.setValue(round(max_au * 2 * margin, 4))
+
+    def _anim_sync_fov_to_overlay(self, el: dict):
+        """If an image is currently loaded for overlay, set the Animator's
+        Fixed FOV to that image's own angular width (using its au_per_px
+        scale and Δ at the current working date) — so animation frames
+        are shown at the same scale as the overlay was built at, instead
+        of whatever Fixed FOV happened to be left over from a previous
+        comet/session. No-op if no image is loaded."""
+        img = self.ctrl._img_arr
+        if img is None:
+            return
+        au_per_px = self.ctrl.au_px_spin.value()
+        if au_per_px <= 0:
+            return
+        w_img = img.shape[1]
+        width_au = w_img * au_per_px
+        try:
+            jd = self._current_obs_jd()
+            r_C, _ = cta.elem_to_state(el, jd)
+            r_E    = cta.earth_pos(jd)
+            r_geo  = float(cta.vmag(r_C - r_E))
+        except Exception:
+            return
+        if r_geo <= 0:
+            return
+        K = (180.0 / np.pi) / r_geo   # deg per AU
+        fov_arcmin = width_au * K * 60.0
+        self.info.anim_rb_fov.setChecked(True)
+        self.info.anim_size.setValue(round(fov_arcmin, 3))
+        self.status.showMessage(
+            f"Animator FOV synced to overlay image: {fov_arcmin:.1f} arcmin "
+            f"({w_img}px × {au_per_px:.6f} AU/px at Δ={r_geo:.3f} AU)", 6000)
+
+    def _anim_compute_frames(self):
+        start_jd, end_jd = self._anim_parse_range()
+        if start_jd is None:
+            return
+        inputs = self._anim_gather_inputs()
+        if inputs is None:
+            return
+        el, betas, ages, max_age, n_pts = inputs
+        self._anim_sync_fov_to_overlay(el)
+        step = self.info.anim_step.value()
+        n_frames = int(round((end_jd - start_jd) / step)) + 1
+        if n_frames < 2:
+            QMessageBox.warning(self, "Bad Range",
+                "Range/step combination produces fewer than 2 frames.")
+            return
+        if n_frames > 300:
+            QMessageBox.warning(self, "Too Many Frames",
+                f"{n_frames} frames requested (max 300) — increase the "
+                f"step or shorten the date range.")
+            return
+
+        self._anim_timer.stop()
+        self.info.anim_btn_play.setText("▶")
+        self._anim_frames = []
+        self.info.anim_btn_compute.setEnabled(False)
+        self.info.anim_progress.setMaximum(n_frames)
+        self.info.anim_progress.setValue(0)
+        self.info.anim_lbl_frame.setText(f"Computing {n_frames} frames…")
+
+        class AnimWorker(QThread):
+            frame_done   = pyqtSignal(dict)
+            progress     = pyqtSignal(int)
+            finished_all = pyqtSignal()
+            error        = pyqtSignal(str)
+
+            def __init__(self, el, betas, ages, max_age, n_pts,
+                        start_jd, step, n_frames):
+                super().__init__()
+                self.el, self.betas, self.ages = el, betas, ages
+                self.max_age, self.n_pts = max_age, n_pts
+                self.start_jd, self.step, self.n_frames = start_jd, step, n_frames
+
+            def run(self):
+                try:
+                    for i in range(self.n_frames):
+                        jd = self.start_jd + i * self.step
+                        m  = cta.compute_model(self.el, jd, self.betas,
+                                               self.ages, self.max_age,
+                                               self.n_pts)
+                        # compute_model() doesn't set info['name'] itself
+                        # (only _on_model_ready does, for the regular
+                        # Compute Model flow) — without this, the title
+                        # falls back to the literal default "Comet".
+                        m["info"]["name"] = self.el.get("name", "Comet")
+                        self.frame_done.emit(m)
+                        self.progress.emit(i + 1)
+                    self.finished_all.emit()
+                except Exception as e:
+                    self.error.emit(str(e))
+
+        self._anim_worker = AnimWorker(el, betas, ages, max_age, n_pts,
+                                       start_jd, step, n_frames)
+        self._anim_worker.frame_done.connect(self._anim_frames.append)
+        self._anim_worker.progress.connect(self.info.anim_progress.setValue)
+        self._anim_worker.finished_all.connect(self._anim_on_compute_done)
+        self._anim_worker.error.connect(self._anim_on_compute_error)
+        self._anim_worker.start()
+
+    def _anim_on_compute_done(self):
+        self.info.anim_btn_compute.setEnabled(True)
+        if not self._anim_frames:
+            QMessageBox.warning(self, "No Frames", "No frames were computed.")
+            return
+        self.info.anim_slider.setEnabled(True)
+        self.info.anim_slider.setRange(0, len(self._anim_frames) - 1)
+        self.info.anim_btn_play.setEnabled(True)
+        self.info.anim_slider.setValue(0)
+        self._anim_show_frame(0)
+
+    def _anim_on_compute_error(self, msg):
+        self.info.anim_btn_compute.setEnabled(True)
+        self.info.anim_lbl_frame.setText("Compute failed.")
+        QMessageBox.warning(self, "Compute Error", msg)
+
+    def _anim_frame_limits(self, model):
+        r_geo = model["info"].get("r_geo", 1.0)
+        K = (180.0 / np.pi) / r_geo
+        if self.info.anim_rb_fov.isChecked():
+            half_deg = (self.info.anim_size.value() / 60.0) / 2.0
+        else:
+            half_deg = (self.info.anim_size.value() / 2.0) * K
+        # East LEFT = inverted x-axis, matching PlotCanvas's own convention
+        return (half_deg, -half_deg), (-half_deg, half_deg)
+
+    def _anim_show_frame(self, idx: int):
+        if not (0 <= idx < len(self._anim_frames)):
+            return
+        self._anim_frame_idx = idx
+        model = self._anim_frames[idx]
+        xlim, ylim = self._anim_frame_limits(model)
+        self.canvas.draw_model(model, img_arr=None,
+                               fixed_xlim=xlim, fixed_ylim=ylim)
+        info = model["info"]
+        # v3.0: keep obs_date AND the EPHEMERIS display in lockstep with
+        # whatever frame is showing — consistent with the Orbit view link
+        # above (orbital elements themselves don't change with date, so
+        # only the ephemeris half of update_info() actually changes here).
+        self.ctrl.obs_date.setText(info["obs_str"][:10])
+        el = self._active_comet_el()
+        if el:
+            self.info.update_info(model, el)
+        mode = "FOV" if self.info.anim_rb_fov.isChecked() else "dist"
+        self.info.anim_lbl_frame.setText(
+            f"Frame {idx+1}/{len(self._anim_frames)} · {info['obs_str'][:10]} · "
+            f"r☉={info['r_helio']:.3f} Δ={info['r_geo']:.3f} · Fixed {mode}")
+
+    def _anim_toggle_play(self):
+        if self._anim_timer.isActive():
+            self._anim_timer.stop()
+            self.info.anim_btn_play.setText("▶")
+        else:
+            self._anim_timer.start(200)   # ms/frame
+            self.info.anim_btn_play.setText("⏸")
+
+    def _anim_advance_frame(self):
+        nxt = self._anim_frame_idx + 1
+        if nxt >= len(self._anim_frames):
+            nxt = 0
+        self.info.anim_slider.setValue(nxt)   # triggers _anim_show_frame via signal
 
     # ── LC popup window ────────────────────────────────────────────────
     def _open_lc_window(self):
@@ -2970,8 +4148,6 @@ class MainWindow(QMainWindow):
         if not name:
             self.status.showMessage("No comet loaded.", 2000); return
         self.status.showMessage(f"Fetching COBS data for {name}…")
-        self.info.btn_fetch_cobs.setEnabled(False)
-        self.info.btn_fetch_cobs.setText("⏳  Fetching…")
 
         class COBSWorker(QThread):
             done  = pyqtSignal(dict)
@@ -2981,54 +4157,23 @@ class MainWindow(QMainWindow):
                 try: self.done.emit(cta.fetch_from_cobs(self.n, self.el))
                 except Exception as e: self.error.emit(str(e))
 
-        self._cobs_worker = COBSWorker(name, self._comet_el or {})
+        self._cobs_worker = COBSWorker(name, self._active_comet_el() or {})
         def _on_done(d):
-            self._cobs_data = d
+            self._cobs_data     = d
+            self._cobs_data_for = name
             H0 = d.get("H0"); n_val = d.get("n")
-            # Show H₀/n prominently
-            try:
-                self.info.val_h0.setText(f"{H0:.2f}" if H0 else "—")
-                self.info.val_n.setText(f"{n_val:.2f}" if n_val else "—")
-            except Exception: pass
-            raw  = len(d.get("raw_obs", []))
-            nos  = len(d.get("obs_list", []))
-            src  = d.get("source","")
-            last = d.get("last_date","")
-            parts = []
-            if raw:  parts.append(f"{raw} COBS observations")
-            if nos:  parts.append(f"{nos} with ephemeris for fit")
-            if last: parts.append(f"Latest: m={d.get('last_mag','?')}  ({last})")
-            parts.append(f"Source: {src}")
-            self.info.cobs_lbl.setText("\n".join(parts))
-            self.info.btn_fetch_cobs.setEnabled(True)
-            self.info.btn_fetch_cobs.setText("📡  FETCH COBS")
-            try: self.info.btn_open_lc.setEnabled(True)
-            except Exception: pass
+            src = d.get("source","")
             msg = f"H₀={H0:.2f}  n={n_val:.2f}" if H0 else "COBS: no fit"
             self.status.showMessage(msg + f"  ({src[:35]})", 8000)
+            cb, self._pending_cobs_callback = self._pending_cobs_callback, None
+            if cb: cb(d)
         def _on_err(msg):
-            self.info.btn_fetch_cobs.setEnabled(True)
-            self.info.btn_fetch_cobs.setText("📡  FETCH COBS")
-            self.info.cobs_lbl.setText(f"⚠ COBS fetch failed:\n{msg[:120]}")
             self.status.showMessage("COBS fetch failed.", 3000)
+            cb, self._pending_cobs_callback = self._pending_cobs_callback, None
+            if cb: cb(None)
         self._cobs_worker.done.connect(_on_done)
         self._cobs_worker.error.connect(_on_err)
         self._cobs_worker.start()
-
-    # ── Analysis report ───────────────────────────────────────────────
-    def _run_analysis(self, comet_el: dict, model: dict):
-        if not model: return
-        info = model["info"]
-        afrho = self.info.afrho_spin.value() or None
-        selected = self.info.get_selected_betas()
-        info["best_betas"] = selected
-        info["obs_jd"] = cta.date_to_jd(
-            self.ctrl.obs_date.text() or cta.jd_to_str(cta.today_jd()))
-        cobs = getattr(self, "_cobs_data", None)
-        txt = cta.generate_dust_analysis(comet_el, info, cobs, afrho)
-        self.info.analysis_text.setPlainText(txt)
-        self.info.tabs.setCurrentIndex(3)
-        self.status.showMessage(f"Analysis: {len(selected)} β selected", 2500)
 
     def _set_theme(self, theme_name: str):
         """Switch between dark and light themes."""
@@ -3125,6 +4270,10 @@ class MainWindow(QMainWindow):
             sxi, seta = model["sun_dir"]
             model["sun_dir"] = (sxi*cos_t - seta*sin_t,
                                 sxi*sin_t + seta*cos_t)
+            # Rotate antivel_dir (v3.0) — must stay locked to sun_dir's frame
+            avxi, aveta = model.get("antivel_dir", (0.0, 0.0))
+            model["antivel_dir"] = (avxi*cos_t - aveta*sin_t,
+                                    avxi*sin_t + aveta*cos_t)
             # Rotate orbit points
             model["orbit"] = [(x*cos_t - y*sin_t, x*sin_t + y*cos_t, dt)
                                for x, y, dt in model["orbit"]]
@@ -3154,6 +4303,14 @@ class MainWindow(QMainWindow):
             # Sun is in direction of PsAng from comet, so (xi_sun,eta_sun) points toward Sun
             model["sun_dir"] = (np.sin(psang_rad), np.cos(psang_rad))
             info["obs_override"] = True
+            # v3.0: antivel_dir was computed from the fetched orbital elements,
+            # which may not match a manually-overridden geometry. There is no
+            # manual PsAMV (position-angle-of-motion-vector) input yet to keep
+            # it consistent, so suppress the arrow rather than show a
+            # potentially mismatched angle relative to the overridden Sun
+            # direction. (A future version could add a psamv override field
+            # alongside psang, mirroring JPL Horizons' own PsAMV column.)
+            model["antivel_dir"] = (0.0, 0.0)
 
         # ── Update AU/pixel from effective plate scale ──
         # Use helper to get plate scale with correct priority (user > WCS > none)
@@ -3175,38 +4332,34 @@ class MainWindow(QMainWindow):
         self.canvas.nuc_y    = ov["nuc_y"]
         self.canvas.au_per_px= ov["au_per_px"]
         self.canvas.north_pa = ov["north_pa"]
-        self.canvas.draw_model(model, img_arr)
-        self.info.update_info(model, self._comet_el, betas)
+        if img_arr is None:
+            # Standalone (no image overlay): use a 600 arcmin Fixed FOV as
+            # the default view instead of the old auto-fit percentile box,
+            # so Compute Model's result is the same starting frame size
+            # the embedded Animator below would continue from — no jump
+            # in apparent zoom between "look at the static model" and
+            # "now play the animation". The Animator's own size field
+            # defaults to the same 600 arcmin for the same reason; both
+            # are still freely editable afterward.
+            half_deg = (600.0 / 60.0) / 2.0
+            self.canvas.draw_model(model, img_arr,
+                                   fixed_xlim=(half_deg, -half_deg),
+                                   fixed_ylim=(-half_deg, half_deg))
+        else:
+            # Overlay (image loaded): always fit the plot area to the
+            # image's own native pixel extent — unchanged from the
+            # earliest versions, never constrained by the Fixed-FOV
+            # default above.
+            self.canvas.draw_model(model, img_arr)
+        self.info.update_info(model, self._comet_el)
 
-        # Enable COBS + analysis buttons
-        try: self.info.btn_fetch_cobs.setEnabled(True)
-        except Exception: pass
-        try: self.info.btn_fetch_cobs.clicked.disconnect()
-        except Exception: pass
-        try:
-            _name = self._comet_el.get("name","")
-            self.info.btn_fetch_cobs.clicked.connect(
-                lambda: self._fetch_cobs(_name))
-        except Exception: pass
-
-
-        try: self.info.btn_open_lc.setEnabled(False)  # enabled after COBS fetch
-        except Exception: pass
-        try: self.info.btn_open_lc.clicked.disconnect()
-        except Exception: pass
-        try:
-            self.info.btn_open_lc.clicked.connect(self._open_lc_window)
-        except Exception: pass
-
-        try: self.info.btn_analyse.setEnabled(True)
-        except Exception: pass
-        try: self.info.btn_analyse.clicked.disconnect()
-        except Exception: pass
-        try:
-            _el = self._comet_el; _mdl = model
-            self.info.btn_analyse.clicked.connect(
-                lambda: self._run_analysis(_el, _mdl))
-        except Exception: pass
+        # v3.0: invalidate any COBS data cached for a *different* comet —
+        # avoids silently showing a previous comet's light curve after
+        # switching comets without an intervening explicit COBS re-fetch.
+        _name = self._comet_el.get("name", "")
+        if self._cobs_data_for is not None and self._cobs_data_for != _name:
+            self._cobs_data     = None
+            self._cobs_data_for = None
 
         r_helio_disp = obs_ovr["r_helio"]   if obs_ovr else info["r_helio"]
         r_geo_disp   = obs_ovr["r_geo"]     if obs_ovr else info["r_geo"]
@@ -3308,6 +4461,43 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"Nucleus set to ({x:.0f}, {y:.0f}) px", 3000)
 
     # ── Export ─────────────────────────────────────────────────────────────
+    def _current_obs_jd(self) -> float:
+        """The 'current working date' for Orbit/calculators. Prefers the
+        obs_date text field — which the embedded Animator keeps in sync
+        with whichever frame is currently shown (v3.0: scrub/play the
+        Animator, then open Orbit, and it shows THAT date) — falling back
+        to the comet's static fetch-time obs_jd if obs_date is empty or
+        unparseable, then today as a last resort."""
+        try:
+            txt = self.ctrl.obs_date.text().strip()
+            if txt:
+                return cta.date_to_jd(txt)
+        except Exception:
+            pass
+        el = self._active_comet_el()
+        if el and el.get("obs_jd") is not None:
+            return el["obs_jd"]
+        return cta.today_jd()
+
+    def _open_orbit_window(self):
+        el = self._active_comet_el()
+        if not el:
+            QMessageBox.warning(self, "No Comet",
+                                "Select or fetch a comet first.")
+            return
+        obs_jd = self._current_obs_jd()
+        # NOTE: parent=None (not parent=self) — a non-modal QDialog parented
+        # to MainWindow is kept "transient for" it by the window manager,
+        # which on most platforms means it's pinned ABOVE MainWindow at all
+        # times, even after MainWindow regains focus (this was the "Orbit
+        # window stays in front always" bug). LCWindow already avoids this
+        # the same way. Stored as self._orbit_win (not a throwaway local)
+        # to prevent a garbage-collection crash, same reasoning as LCWindow.
+        self._orbit_win = OrbitWindow(el, obs_jd, parent=None)
+        self._orbit_win.show()
+        self._orbit_win.raise_()
+        self._orbit_win.activateWindow()
+
     def _save_png(self):
         if not self._model:
             QMessageBox.information(self, "No Model", "Compute a model first.")
@@ -3361,7 +4551,7 @@ class MainWindow(QMainWindow):
             "COMET TAIL ANALYZER</div>"
             "<div style='font-size:10px;color:#2a5070;letter-spacing:3px;margin-top:4px'>"
             "FINSON–PROBSTEIN DUST TAIL MODEL  ·  1968</div>"
-            "<div style='font-size:11px;color:#3a6090;margin-top:8px'>Version 2.4  ·  2026</div>"
+            "<div style='font-size:11px;color:#3a6090;margin-top:8px'>Version 3.0  ·  2026</div>"
             "</div>")
         vb.addWidget(banner)
 
@@ -3391,9 +4581,9 @@ class MainWindow(QMainWindow):
             "<span style='color:#5a90a8'> — radiation-to-gravity force ratio.<br>"
             "Larger β = smaller grains, pushed further into the tail.</span><br><br>"
             "<span style='color:#ff9090'>● Syndynes</span>"
-            "<span style='color:#a0c0d8'> — same β (grain size), different emission times.</span><br>"
+            "<span style='color:#a0c0d8'> — same β (grain radius), different emission times.</span><br>"
             "<span style='color:#ffe080'>● Synchrones</span>"
-            "<span style='color:#a0c0d8'> — same emission time, different β (grain sizes).</span><br><br>"
+            "<span style='color:#a0c0d8'> — same emission time, different β (grain radii).</span><br><br>"
             "<span style='color:#3a6080'>⚠ Zero ejection velocity assumed.</span>")
 
         section("DEVELOPER",
@@ -3437,7 +4627,7 @@ class MainWindow(QMainWindow):
         fl = QHBoxLayout(foot); fl.setContentsMargins(16,8,16,8)
         lbl_ver = QLabel(
             "<span style='color:#1a3050;font-size:10px;font-family:'Segoe UI',Arial,sans-serif'>"
-            "☄ Comet Tail Analyzer v2.4 · Teerasak Thaluang · MPC-O51/O58</span>")
+            "☄ Comet Tail Analyzer v3.0 · Teerasak Thaluang · MPC-O51/O58</span>")
         fl.addWidget(lbl_ver,1)
         ok_btn = QPushButton("  OK  ")
         ok_btn.clicked.connect(dlg.accept)

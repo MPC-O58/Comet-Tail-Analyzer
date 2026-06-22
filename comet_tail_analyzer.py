@@ -3,9 +3,86 @@
 """
 =============================================================================
   comet_tail_analyzer.py  —  Finson–Probstein Dust Tail Model
-  Version 2.4   ·   Teerasak Thaluang (MPC O51/O58)
+  Version 3.0   ·   Teerasak Thaluang (MPC O51/O58)
 =============================================================================
   Changelog:
+    v3.0  • compute_orbit_diagram() now captures the comet's heliocentric
+            velocity from elem_to_state() (previously discarded with a
+            throwaway `_`) and returns its unit direction as
+            velocity_dir_xyz, plus r_max_plot for scaling. draw_orbit_
+            diagram() uses these to draw an arrow at the comet's current
+            position showing its direction of motion along the orbit.
+    v3.0  • beta_to_size() gained an optional Qpr parameter (default 1.0,
+            backward compatible) so the GUI's new standalone Dust particle
+            radius… calculator can expose it as an editable value without
+            duplicating the formula.
+          • NEW: compute_dust_production_rate(afrho_cm, r_h, v_dust_kms,
+            p_v) — factored out of generate_dust_analysis()'s inline Afρ
+            section so the GUI's new standalone Dust production rate…
+            calculator can share the exact same formula instead of
+            duplicating it a third time.
+          • generate_dust_analysis() no longer reports F-P grain radius
+            (moved to the GUI's standalone calculator — that formula needs
+            only β/ρ_d/Qpr, not a per-comet model) or accepts an rho_d
+            parameter (now unused). The inline Afρ/dust-production section
+            is unchanged.
+    v3.0  • Physical parameters (grain density ρ_d, dust expansion velocity
+            v_dust, geometric albedo p_v) are no longer hardcoded — they are
+            now keyword arguments on generate_dust_analysis() and
+            CometTailVisualizer (rho_d), with literature-referenced
+            defaults (ρ_d=0.5 g/cm³, Fulle et al. 2016; p_v=0.04,
+            SEPPCoN/Schambeau et al. 2021) so the GUI's new Calculation >
+            Physical Parameters… dialog can let the user override them
+            per-comet instead of editing source. beta_to_size()'s default
+            ρ also changed 1.0 → 0.5 g/cm³ to match.
+          • fetch_from_cobs()'s H₀/n least-squares fit now also returns
+            n_err, the 1-σ standard error on n from the fit residuals.
+            generate_dust_analysis() uses it (together with n_fit_pts) to
+            gate display: fits with <10 points or σ_n>1.0 are labeled
+            "⚠ PRELIMINARY" and the derived m_pred/outburst-flag claims
+            that compound n's uncertainty are suppressed rather than
+            shown as if solid (thresholds are a judgment call, documented
+            inline — adjust if needed).
+          • CRITICAL FIX: β→grain-radius coefficient was using an
+            uncorrected two-parameter form (C_pr·Qpr/(ρr), C_pr=1.19e-3
+            kg/m²) that omitted a factor of 2 relative to the convention
+            that constant is normally paired with (cf. Schambeau et al.
+            2021, ApJ — d=diameter form; Liu & Liu 2024 — explicit
+            C_pr·Qpr/(2ρa) radius form. NOTE: Moreno 2025, A&A 695 A263
+            cites the same C_pr=1.19e-3 kg/m² value but does not show the
+            equation's exact form in the text — not independently
+            verified as using the /2 convention; not relied upon here).
+            Replaced with BETA_TO_RADIUS_UM = 0.574,
+            derived directly from Burns, Lamy & Soter (1979) Icarus 40,
+            1, Eq. 19, sidestepping the C_pr/2 ambiguity entirely. All
+            v2.4 grain radii were too LARGE by a factor of 2.07 — see the
+            BETA_TO_RADIUS_UM constant comment for the full derivation.
+            Fixed in all 3 places it was duplicated (beta_to_size(),
+            generate_dust_analysis()'s _sz_str(), and an inline copy in
+            the summary line); the latter two now delegate to
+            beta_to_size() so the formula can never drift out of sync
+            between call sites again.
+          • All "grain size" labels/output corrected to "grain radius"
+            (the value was always a radius; the ambiguous label risked
+            being misread as diameter — a 2× error stacking on top of
+            the formula fix above).
+          • compute_model() gained project_vector_sky() + an
+            'antivel_dir' key: the negative of the comet's heliocentric
+            velocity projected onto the sky, drawn as a second arrow
+            alongside the existing Sun-direction arrow (same convention
+            as Moreno 2025 Fig. 1 and Mariblanca-Escalona et al. 2026
+            Fig. 7) — shows how far a real, non-zero-ejection-velocity
+            tail is expected to lean from the pure antisolar line.
+          • New compute_orbit_diagram() / draw_orbit_diagram(): a full
+            3D heliocentric-ecliptic view of the comet's physical
+            position on its orbit (Sun as a yellow circle, perihelion
+            marked, Earth's orbit for scale, drop-lines showing
+            out-of-plane height) — distinct from the existing sky-
+            projected 'orbit' trail in compute_model(), which only shows
+            tail-axis direction, not where the comet physically sits.
+            Valid uniformly for elliptical/parabolic/hyperbolic orbits
+            via the conic formula r(f)=q(1+e)/(1+e·cos f) directly in
+            true anomaly.
     v2.4  • COMET_DB redesigned: orbital elements removed entirely.  The
             catalogue now stores only preferred observation date (obs) and
             editorial note.  Elements are always fetched live from JPL
@@ -52,7 +129,7 @@
 
 from __future__ import annotations
 
-__version__ = "2.4"
+__version__ = "2.5"
 
 import argparse
 import logging
@@ -83,7 +160,23 @@ warnings.filterwarnings('ignore')
 MU   = 2.9591220828e-4          # GM_sun  (AU³ day⁻²)
 OBL  = np.radians(23.43929111)  # J2000 obliquity
 J2K  = 2451545.0                # JD of J2000.0
-C_PR = 1.19e-3                  # Burns radiation pressure coeff (kg m⁻²)
+
+# β → grain radius coefficient, derived DIRECTLY from Burns, Lamy & Soter
+# (1979, Icarus 40, 1) Eq. 19:
+#     β ≡ F_rad/F_grav = (3·L_sun·Qpr) / (16·π·c·G·M_sun·ρ·s) = 5.7×10⁻⁵ Qpr/(ρs)   [cgs: ρ in g/cm³, s in cm]
+# Converting s from cm to µm (×10⁴):
+#     β = 0.574 · Qpr / (ρ[g/cm³] · s[µm])         ⇒  s[µm] = 0.574 · Qpr / (β · ρ)
+#
+# NOTE (v3.0): earlier versions used a different two-parameter form,
+#     β = C_pr·Qpr/(ρr) with C_pr = 1.19×10⁻³ kg/m²  (Finson & Probstein 1968a
+#     convention, as quoted in e.g. Moreno 2025 A&A 695 A263 and
+#     Mariblanca-Escalona et al. 2026 — both of whom pair this C_pr with an
+#     explicit /2 in the denominator: β = C_pr·Qpr/(2ρr)).
+# v2.4 omitted that factor of 2, giving grain radii 2.07× too LARGE.
+# v3.0 sidesteps the C_pr/2 ambiguity entirely by deriving the coefficient
+# straight from Eq. 19's own numerical result, verified independently from
+# first principles against the primary source.
+BETA_TO_RADIUS_UM = 0.574       # µm · g·cm⁻³,  Qpr = 1 (Burns et al. 1979, Eq. 19)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  COMET DATABASE  (30+ objects)
@@ -238,7 +331,7 @@ def today_jd() -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _HTTP_HEADERS = {
-    "User-Agent": "CometTailAnalyzer/2.4",
+    "User-Agent": "CometTailAnalyzer/2.5",
     "Accept":     "application/json",
 }
 
@@ -398,7 +491,9 @@ def fetch_from_cobs(designation: str, comet_el: dict | None = None) -> dict:
         Least-squares fit of  m = H₀ + 5·log10(Δ) + 2.5·n·log10(r)
         on the 'active zone' (r ≤ r_max_fit, mag ≤ 19).
         Falls back to all valid observations if too few are in the active zone.
-        Returns (H₀, n, points_used) — H₀ and n are None if the fit fails.
+        Returns (H₀, n, n_err, points_used) — H₀, n, n_err are None if the fit fails.
+        n_err is the 1-σ standard error on n from the fit's residuals
+        (None if there are too few degrees of freedom to estimate it).
         """
         valid = [o for o in obs
                  if 1.0 <= o['mag'] <= 19.0
@@ -408,19 +503,32 @@ def fetch_from_cobs(designation: str, comet_el: dict | None = None) -> dict:
                else [o for o in obs
                      if 1.0 <= o['mag'] <= 20.0 and o['r_helio'] > 0.1])
         if len(pts) < 5:
-            return None, None, pts
+            return None, None, None, pts
         m  = np.array([o['mag']               for o in pts])
         lr = np.array([np.log10(o['r_helio']) for o in pts])
         ld = np.array([np.log10(o['delta'])   for o in pts])
         if np.std(lr) < 0.01:
-            return None, None, pts
+            return None, None, None, pts
         y    = m - 5.0 * ld
         A    = np.column_stack([np.ones(len(y)), lr])
         coef, *_ = np.linalg.lstsq(A, y, rcond=None)
         n_val = float(coef[1]) / 2.5
         if not (0.5 <= n_val <= 25):
-            return None, None, pts
-        return round(float(coef[0]), 2), round(n_val, 2), pts
+            return None, None, None, pts
+        # 1-σ standard error on the slope (→ on n), from the fit residuals.
+        # dof = N points − 2 free parameters (H0, slope).
+        n_err = None
+        dof = len(y) - 2
+        if dof > 0:
+            resid  = y - A @ coef
+            sigma2 = float(np.sum(resid ** 2)) / dof
+            try:
+                cov = sigma2 * np.linalg.inv(A.T @ A)
+                n_err = round(float(np.sqrt(cov[1, 1])) / 2.5, 2)
+            except np.linalg.LinAlgError:
+                n_err = None
+        return round(float(coef[0]), 2), round(n_val, 2), n_err, pts
+
 
     # ── 1. COBS observations (date + magnitude) ──────────────────────────
     raw_obs: list[dict] = []
@@ -531,11 +639,11 @@ def fetch_from_cobs(designation: str, comet_el: dict | None = None) -> dict:
 
     # ── 3. Fit H₀, n ─────────────────────────────────────────────────────
     if obs_with_eph:
-        H0_fit, n_fit, pts = _fit_H0_n(obs_with_eph)
+        H0_fit, n_fit, n_err, pts = _fit_H0_n(obs_with_eph)
         if H0_fit is not None:
             last = max(obs_with_eph, key=lambda o: o['date'])
             return dict(
-                H0=H0_fit, n=n_fit,
+                H0=H0_fit, n=n_fit, n_err=n_err,
                 H0_fit=H0_fit, n_fit=n_fit,
                 last_mag   = last.get("mag"),
                 last_date  = last.get("date", ""),
@@ -552,7 +660,7 @@ def fetch_from_cobs(designation: str, comet_el: dict | None = None) -> dict:
     if raw_obs:
         last = max(raw_obs, key=lambda o: o['date'])
         return dict(
-            H0=None, n=None, H0_fit=None, n_fit=None,
+            H0=None, n=None, n_err=None, H0_fit=None, n_fit=None,
             last_mag=last.get("mag"), last_date=last.get("date", ""),
             last_r=None, obs_list=[], raw_obs=raw_obs,
             n_fit_pts=0, r_max_fit=r_max_fit,
@@ -590,7 +698,7 @@ def fetch_from_cobs(designation: str, comet_el: dict | None = None) -> dict:
                 M1v, k1v = float(el['M1'][0]), float(el['k1'][0])
                 if not (isnan(M1v) or isnan(k1v)):
                     return dict(
-                        H0=round(M1v, 2), n=round(k1v, 2),
+                        H0=round(M1v, 2), n=round(k1v, 2), n_err=None,
                         H0_fit=None, n_fit=None,
                         last_mag=None, last_date='', last_r=None,
                         obs_list=[], raw_obs=[],
@@ -607,12 +715,64 @@ def fetch_from_cobs(designation: str, comet_el: dict | None = None) -> dict:
     )
 
 
+def compute_dust_production_rate(afrho_cm: float, r_h: float,
+                                 v_dust_kms: float, p_v: float = 0.04) -> dict:
+    """
+    Rough Afρ-based dust production rate estimate — order-of-magnitude
+    only, NOT a substitute for full coma photometry/Mie-scattering
+    modeling (cf. Section 3.1.2-3.1.3 of Schambeau et al. 2021 for the
+    rigorous version). Shared by generate_dust_analysis()'s inline Afρ
+    section and the standalone Calculation > Dust production rate…
+    calculator, so the two can never silently drift apart.
+
+        Afρ_norm(1AU) = Afρ_obs · r_h²
+        Q_d ≈ Afρ_norm · v_dust / (2·p_v)        [kg/s, v_dust in km/s
+                                                    converted to cm/s via
+                                                    the 1e5 factor below]
+
+    Returns dict(afrho_norm, Qd_rough, activity).
+    """
+    afrho_norm = afrho_cm * r_h ** 2
+    Qd_rough   = afrho_norm * v_dust_kms * 1e5 / (p_v * 2)   # kg/s
+    if   Qd_rough > 1e4: act = "VERY HIGH (outburst / hyperactive candidate)"
+    elif Qd_rough > 1e3: act = "HIGH (active near perihelion)"
+    elif Qd_rough > 1e2: act = "MODERATE (typical active comet)"
+    else:                act = "LOW (weakly active or distant)"
+    return dict(afrho_norm=afrho_norm, Qd_rough=Qd_rough, activity=act)
+
+
 def generate_dust_analysis(comet_el: dict, model_info: dict,
-                           cobs_data: dict | None = None,
-                           afrho_cm: float | None = None) -> str:
+                           afrho_cm: float | None = None,
+                           v_dust_kms: float | None = None,
+                           p_v: float = 0.04) -> str:
     """
     Generate a plain-text preliminary dust analysis report.
-    Combines F-P results, COBS photometry, Afρ, and grain size interpretation.
+    Combines F-P results and Afρ/dust-production interpretation.
+
+    Two sections that used to live in this report were moved out to their
+    own standalone tools/tabs in v3.0, since each is self-contained and
+    duplicating them here risked them silently drifting apart from the
+    place a user would actually go to refresh them:
+      - F-P grain radius → Calculation > Dust particle radius… (needs
+        only β/ρ_d/Qpr, not a per-comet model; beta_to_size() remains its
+        single source of truth, shared with the β TABLE's radius column).
+      - COBS light-curve fit (H₀/n, m_pred vs. m_obs outburst flagging)
+        → the LIGHT CURVE tab/popup window, which already shows it.
+    This function no longer takes a cobs_data argument as a result.
+
+    Physical parameters (all user-adjustable directly in the relevant
+    standalone calculator under the GUI's Calculation menu; defaults shown
+    are literature values, not universal constants):
+        v_dust_kms dust expansion velocity [km/s] used only for the rough
+                   Q_d (Afρ-based) production-rate estimate. If None
+                   (default), falls back to the empirical scaling law
+                   v = 0.1·r_h^-0.5 km/s (uncited rule of thumb — override
+                   with a measured value when available, e.g. quiescent
+                   ~0.01-0.05 km/s vs. outburst ~0.1-0.3 km/s for 29P,
+                   Schambeau et al. 2017, 2019).
+        p_v        visible geometric albedo, default 0.04 (typical bare
+                   cometary nucleus; SEPPCoN/Schambeau et al. 2021 NEATM
+                   assumption).
     """
     r_h     = model_info.get("r_helio", 1.0)
     r_geo   = model_info.get("r_geo",   1.0)
@@ -667,106 +827,47 @@ def generate_dust_analysis(comet_el: dict, model_info: dict,
     lines.append(f"  Ice drv : {ice}")
     lines.append("")
 
-    # ── F-P grain size ──────────────────────────────────────────────────
-    lines.append("── F-P GRAIN SIZE (ρ = 1 g/cm³) ───────────")
-    best_betas = model_info.get("best_betas", [])
+    # NOTE (v3.0): the F-P grain-radius (β→r) section that used to live here
+    # was moved out to its own standalone calculator — Calculation >
+    # Dust particle radius… — since the formula needs only (β, ρ_d, Qpr),
+    # not a computed model, and doesn't belong mixed into a per-comet
+    # analysis report. beta_to_size() remains the single source of truth
+    # for the formula; both that calculator and the β TABLE's radius
+    # column call it directly.
 
-    def _sz_str(b, rho=1.0):
-        sz = 1.19 / (b * rho)
-        if sz >= 1000:
-            return f"{sz/1000:.2f} mm"
-        return f"{sz:.1f} µm"
 
-    if best_betas:
-        if len(best_betas) == 1:
-            b = best_betas[0]
-            lines.append(f"  Selected β = {b}")
-            lines.append(f"  Grain size = {_sz_str(b)}  (ρ=1 g/cm³)")
-            lines.append(f"  Range (ρ=0.5–2 g/cm³): "
-                         f"{_sz_str(b, 2.0)} – {_sz_str(b, 0.5)}")
-        else:
-            b_lo, b_hi = min(best_betas), max(best_betas)
-            sz_lo = _sz_str(b_hi)   # higher β → smaller grains
-            sz_hi = _sz_str(b_lo)   # lower β → larger grains
-            lines.append(f"  Selected β range: {b_lo} – {b_hi}")
-            lines.append(f"  Grain size range: {sz_lo} – {sz_hi}  (ρ=1 g/cm³)")
-            lines.append(f"  Dominant emission: β={best_betas[0]}  → {_sz_str(best_betas[0])}")
-            for b in best_betas:
-                lines.append(f"    β={b:<7} → {_sz_str(b)}")
-    else:
-        lines.append("  (tick β values in β TABLE that match the tail)")
-    lines.append("")
 
     # ── Afρ / Dust production ───────────────────────────────────────────
     if afrho_cm and afrho_cm > 0:
         lines.append("── Afρ / DUST PRODUCTION ───────────────────")
         lines.append(f"  Afρ (obs)     = {afrho_cm:.0f} cm  at r={r_h:.3f} AU")
-        afrho_norm = afrho_cm * r_h ** 2
-        lines.append(f"  Afρ norm(1AU) = {afrho_norm:.0f} cm")
         # Rough Q_d estimate
-        v_dust = 0.1 * r_h ** (-0.5)            # km/s, approximate
-        p_v    = 0.04                           # geometric albedo
-        Qd_rough = afrho_norm * v_dust * 1e5 / (p_v * 2)   # kg/s
-        lines.append(f"  v_dust est.   ≈ {v_dust:.3f} km/s  (r^-0.5 law)")
-        lines.append(f"  Q_d (rough)   ≈ {Qd_rough:.0e} kg/s")
-        if   Qd_rough > 1e4: act = "VERY HIGH (outburst / hyperactive candidate)"
-        elif Qd_rough > 1e3: act = "HIGH (active near perihelion)"
-        elif Qd_rough > 1e2: act = "MODERATE (typical active comet)"
-        else:                act = "LOW (weakly active or distant)"
-        lines.append(f"  Activity      : {act}")
+        if v_dust_kms is not None:
+            v_dust  = v_dust_kms
+            v_label = f"{v_dust:.3f} km/s  (user-set)"
+        else:
+            v_dust  = 0.1 * r_h ** (-0.5)        # km/s, empirical r^-0.5 law
+            v_label = f"{v_dust:.3f} km/s  (r^-0.5 law, no fixed reference — override if known)"
+        qd = compute_dust_production_rate(afrho_cm, r_h, v_dust, p_v)
+        lines.append(f"  Afρ norm(1AU) = {qd['afrho_norm']:.0f} cm")
+        lines.append(f"  v_dust est.   ≈ {v_label}")
+        lines.append(f"  p_v (albedo)  = {p_v:g}")
+        lines.append(f"  Q_d (rough)   ≈ {qd['Qd_rough']:.0e} kg/s")
+        lines.append(f"  Activity      : {qd['activity']}")
         lines.append("")
 
-    # ── COBS photometry ─────────────────────────────────────────────────
-    if cobs_data:
-        lines.append("── COBS PHOTOMETRY ─────────────────────────")
-        H0 = cobs_data.get("H0")
-        n  = cobs_data.get("n")
-        last_mag  = cobs_data.get("last_mag")
-        last_date = cobs_data.get("last_date", "")
-        if H0 is not None:
-            lines.append(f"  H₀ = {H0:.2f}  n = {n:.2f}")
-            if n is not None:
-                if   n > 7:   nn = "extremely steep — strong sublimation threshold"
-                elif n > 5:   nn = "steep — sharply peaked activity near perihelion"
-                elif n > 3.5: nn = "near H₂O standard (n≈4)"
-                elif n > 2:   nn = "shallow — possible CO/CO₂ activity"
-                else:         nn = "very shallow — near-constant activity"
-                lines.append(f"  n note : {nn}")
-            if H0 and n:
-                m_pred_now = H0 + 5 * np.log10(r_geo) + 2.5 * n * np.log10(r_h)
-                lines.append(
-                    f"  m_pred (r={r_h:.3f} AU, Δ={r_geo:.3f} AU) = {m_pred_now:.1f}")
+    # NOTE (v3.0): the COBS light-curve section (H₀/n fit, m_pred vs.
+    # m_obs outburst-candidate flagging) that used to print here was
+    # removed — that information belongs to, and is already shown in,
+    # the dedicated LIGHT CURVE tab/popup window, so duplicating it in
+    # the text report risked the two silently disagreeing if one was
+    # refreshed and the other wasn't. This function no longer takes a
+    # cobs_data argument at all as a result. fetch_from_cobs()'s
+    # n_err/n_fit_pts robustness fields remain available on whatever the
+    # caller's own cobs_data dict is, for the LIGHT CURVE tab itself to
+    # surface a "preliminary fit" warning if it wants one.
 
-                if last_mag and last_date:
-                    last_r = cobs_data.get("last_r")
-                    try:
-                        obs_str = model_info.get("obs_str", "")[:10]
-                        d_model = (datetime.strptime(obs_str, "%Y-%m-%d")
-                                   if obs_str else None)
-                        d_last  = datetime.strptime(last_date[:10], "%Y-%m-%d")
-                        day_diff = abs((d_last - d_model).days) if d_model else 999
-                    except Exception:
-                        day_diff = 999
 
-                    if day_diff <= 30 and last_r:
-                        delta_est   = r_geo * (last_r / r_h)
-                        m_pred_last = H0 + 5*np.log10(delta_est) + 2.5*n*np.log10(last_r)
-                        dm = last_mag - m_pred_last
-                        if abs(dm) > 1.5:
-                            flag = f"⚠ OUTBURST candidate! Δm={dm:+.1f}"
-                        elif abs(dm) > 0.7:
-                            flag = (f"slightly {'brighter' if dm < 0 else 'fainter'}"
-                                    f" than model  Δm={dm:+.1f}")
-                        else:
-                            flag = f"matches model well  Δm={dm:+.1f}"
-                        lines.append(f"  m_obs  = {last_mag:.1f}  ({last_date})  → {flag}")
-                    elif day_diff > 30:
-                        lines.append(
-                            f"  m_obs  = {last_mag:.1f}  ({last_date})"
-                            f"  [+{day_diff}d from model date — no outburst comparison]")
-                    else:
-                        lines.append(f"  m_obs  = {last_mag:.1f}  ({last_date})")
-        lines.append("")
 
     # ── Summary ─────────────────────────────────────────────────────────
     lines.append("── SUMMARY ────────────────────────────────")
@@ -775,8 +876,6 @@ def generate_dust_analysis(comet_el: dict, model_info: dict,
                 else f", {abs(dt_peri):.0f}d pre-perihelion.")
     if afrho_cm:
         summary += f" Afρ={afrho_cm:.0f} cm"
-        if cobs_data and cobs_data.get("H0"):
-            summary += f"; H₀={cobs_data['H0']:.1f}, n={cobs_data['n']:.1f}."
     if r_h > 5:
         summary += (" Activity at this distance is driven by supervolatile"
                     " ices (CO/CO₂), suggesting a pristine nucleus.")
@@ -784,13 +883,6 @@ def generate_dust_analysis(comet_el: dict, model_info: dict,
         summary += " CO₂ sublimation likely dominates at this distance."
     else:
         summary += " Classical H₂O sublimation active."
-    if best_betas:
-        dom_b  = best_betas[0]
-        dom_sz = 1.19 / dom_b
-        unit   = "mm" if dom_sz >= 1000 else "µm"
-        sv     = dom_sz / 1000 if dom_sz >= 1000 else dom_sz
-        summary += (f" Dominant grain size {sv:.1f} {unit} (β={dom_b},"
-                    f" ρ=1 g/cm³).")
     lines.append(f"  {summary}")
     lines.append("")
     lines.append("  [Comet Tail Analyzer by Teerasak Thaluang]")
@@ -1148,6 +1240,37 @@ def project_sky(r_particle, r_comet, r_earth):
             np.degrees(Dec))
 
 
+def project_vector_sky(vec, r_comet, r_earth):
+    """
+    Project a DIRECTION vector (e.g. heliocentric velocity) onto the sky
+    plane, using the same East/North basis that project_sky() derives from
+    the comet's own position. Unlike project_sky(), `vec` is a displacement
+    (not an absolute position) so no r_earth subtraction is applied to it.
+
+    Used for the anti-velocity arrow (v3.0): the negative of the comet's
+    heliocentric velocity vector, projected onto the sky, shows how much
+    the dust tail is expected to lean away from the pure anti-solar
+    direction due to non-zero ejection velocity / orbital motion — the
+    same convention used by Moreno (2025, A&A 695 A263, Fig. 1) and
+    Mariblanca-Escalona et al. (2026, MNRAS) to label their tail images.
+
+    Returns (xi_component, eta_component) in the same units as `vec`,
+    or None if the comet is at the origin (degenerate geometry).
+    """
+    rEC  = ecl_to_eq(r_comet - r_earth)
+    dist = vmag(rEC)
+    if dist < 1e-10:
+        return None
+    RA   = np.arctan2(rEC[1], rEC[0])
+    Dec  = np.arcsin(np.clip(rEC[2] / dist, -1, 1))
+    east  = np.array([-np.sin(RA), np.cos(RA), 0.0])
+    north = np.array([-np.sin(Dec) * np.cos(RA),
+                      -np.sin(Dec) * np.sin(RA),
+                       np.cos(Dec)])
+    v_eq = ecl_to_eq(vec)
+    return float(vdot(v_eq, east)), float(vdot(v_eq, north))
+
+
 def sky_to_pixel(xi, eta, nuc_x, nuc_y, au_per_px, north_pa_deg):
     """
     Convert sky offsets (AU East, AU North) → image pixel coordinates.
@@ -1169,8 +1292,8 @@ def compute_model(comet_el: dict, obs_jd: float,
     Compute syndyne and synchrone curves for the given comet at obs_jd.
     Returns a dict with keys: syndynes, synchrones, sun_dir, orbit, info.
     """
-    r_C, _ = elem_to_state(comet_el, obs_jd)
-    r_E    = earth_pos(obs_jd)
+    r_C, v_C = elem_to_state(comet_el, obs_jd)
+    r_E      = earth_pos(obs_jd)
 
     ref = project_sky(r_C, r_C, r_E)
     if ref is None:
@@ -1225,10 +1348,19 @@ def compute_model(comet_el: dict, obs_jd: float,
         except Exception:
             pass
 
-    # ── Sun direction (anti-solar vector points away from Sun) ───────────
+    # ── Sun direction (points FROM comet TOWARD the Sun) ──────────────────
     r_sun_proj = project_sky(np.zeros(3), r_C, r_E)
     sun_xi  = r_sun_proj[0] if r_sun_proj else 0.0
     sun_eta = r_sun_proj[1] if r_sun_proj else 0.0
+
+    # ── Anti-velocity direction (v3.0) ─────────────────────────────────────
+    # Negative of the comet's heliocentric velocity, projected onto the sky.
+    # A non-zero-ejection-velocity dust tail leans toward this direction
+    # rather than the pure antisolar direction — see Moreno (2025) Fig. 1
+    # and Mariblanca-Escalona et al. (2026) Fig. 7, who plot both vectors
+    # on every tail image for exactly this reason.
+    av_proj = project_vector_sky(-v_C, r_C, r_E)
+    antivel_xi, antivel_eta = av_proj if av_proj else (0.0, 0.0)
 
     # ── Ephemeris info ──────────────────────────────────────────────────
     r_helio   = float(vmag(r_C))
@@ -1242,30 +1374,261 @@ def compute_model(comet_el: dict, obs_jd: float,
 
     return dict(syndynes=syndynes, synchrones=synchrones,
                 sun_dir=(sun_xi, sun_eta),
+                antivel_dir=(antivel_xi, antivel_eta),
                 orbit=orbit_pts, info=info)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  BETA → GRAIN SIZE
+#  BETA → GRAIN RADIUS
 # ─────────────────────────────────────────────────────────────────────────────
-def beta_to_size(beta: float, rho_g_cm3: float = 1.0) -> str:
+def compute_orbit_diagram(comet_el: dict, obs_jd: float, n_pts: int = 300) -> dict:
     """
-    Grain radius for given β and dust density ρ (g/cm³).
+    3D heliocentric-ecliptic diagram of the comet's position on its ACTUAL
+    orbital ellipse/hyperbola, relative to the Sun, perihelion, and Earth's
+    orbit (v3.0; full 3D as of this revision).
 
-    From Burns et al. (1979):
-        β = C_pr · Q_pr / (ρ [kg/m³] · r [m])
-      With C_pr = 1.19×10⁻³ kg/m², Q_pr = 1 (geometric optics, r > ~1 µm):
-        r [µm] = 1.19 / (ρ [g/cm³] · β)
+    This is physically distinct from compute_model()'s 'orbit' key, which
+    is the comet's path PROJECTED ONTO THE SKY (±40 days around obs_jd,
+    used to judge the tail-axis direction relative to the orbital trail).
+    That sky-projection answers "which way does the tail point on this
+    image"; this diagram answers "where does the comet physically sit in
+    its orbit right now" — useful context when interpreting why dust
+    production/Afρ changes at a given point in the orbit (e.g. post-
+    perihelion fragmentation events, onset-of-activity distance, etc.),
+    and the 3D tilt directly shows the orbital inclination relative to
+    the ecliptic (= Earth's orbital plane).
 
-    Reference values (ρ = 1 g/cm³):
-        β = 1.0   → r ≈ 1.19 µm   (radiation pressure = gravity)
-        β = 0.1   → r ≈ 11.9 µm
-        β = 0.01  → r ≈ 119 µm
-        β = 0.001 → r ≈ 1.19 mm   (near-orbital, debris trail)
+    Uses the conic-section formula r(f) = q(1+e)/(1+e·cos f) directly in
+    true anomaly, which is valid uniformly for elliptical, parabolic, and
+    hyperbolic orbits alike — no period or Kepler-equation solving needed
+    for the orbit shape itself (only the comet's *current* position still
+    requires the usual time-based propagation via elem_to_state()).
+
+    Returns a dict with keys (all positions are full 3D ecliptic AU,
+    Z = height above/below the ecliptic plane = Earth's orbital plane):
+        orbit_xyz        (n_pts,3)  the orbit's shape in 3D
+        comet_xyz         (x,y,z)   comet's current position
+        perihelion_xyz    (x,y,z)   perihelion point
+        earth_orbit_xyz   (200,3)   Earth's orbit (assumed circular, 1 AU, z≈0)
+        earth_xyz         (x,y,z)   Earth's current position
+        sun_xyz           (0,0,0)
+        q, e, r_helio, name
+    """
+    q, e = comet_el['q'], comet_el['e']
+    iR  = np.radians(comet_el['i'])
+    OR  = np.radians(comet_el['Omega'])
+    oR  = np.radians(comet_el['omega'])
+    cO, sO = np.cos(OR), np.sin(OR)
+    cI, sI = np.cos(iR), np.sin(iR)
+    co, so = np.cos(oR), np.sin(oR)
+    P = np.array([cO*co - sO*so*cI,    sO*co + cO*so*cI,    so*sI])
+    Q = np.array([-(cO*so + sO*co*cI), -(sO*so - cO*co*cI), co*sI])
+
+    r_C, v_C    = elem_to_state(comet_el, obs_jd)
+    r_helio_now = float(vmag(r_C))
+    v_mag = float(vmag(v_C))
+    # Unit direction of motion (heliocentric velocity) — (0,0,0) is the
+    # sentinel for "no velocity data" (only possible if elem_to_state ever
+    # returns a zero vector, which it shouldn't for a real orbit) so
+    # draw_orbit_diagram can skip drawing the arrow rather than drawing a
+    # zero-length one.
+    v_hat = (v_C / v_mag) if v_mag > 1e-12 else np.zeros(3)
+
+    # Cap the plotted curve by a physical DISTANCE (not a fixed fraction of
+    # an angle), scaled to stay relevant to the comet's own perihelion and
+    # current position — so Earth's 1 AU orbit is always a clearly visible
+    # fraction of the frame without manual rescaling.
+    r_max_plot = max(8.0 * q, 3.0 * r_helio_now, 4.0)
+
+    # Separate, much larger absolute threshold for "is the aphelion itself
+    # modest enough to just show the whole ellipse" (e.g. Halley's ~35 AU
+    # is a perfectly fine, attractive full ellipse to render) — this must
+    # NOT be compared against r_max_plot (~4-8 AU), which is the small
+    # inner-system reference scale used only for capping genuinely huge
+    # orbits; comparing against that instead would wrongly capt every
+    # closed orbit larger than a few AU, including Halley's.
+    APHELION_FULL_DISPLAY_LIMIT = 100.0   # AU
+
+    show_full_ellipse = False
+    if e < 1.0 - 1e-6:
+        aphelion = q * (1.0 + e) / (1.0 - e)
+        # Very-high-e bound orbits (e.g. e=0.999 with aphelion in the
+        # hundreds of AU) are just as much a "dwarfs the inner system"
+        # problem as a parabolic orbit, so above this limit they get the
+        # same distance cap as the open-orbit branch below.
+        show_full_ellipse = aphelion <= APHELION_FULL_DISPLAY_LIMIT
+
+    if show_full_ellipse:
+        f_arr = np.linspace(-np.pi, np.pi, n_pts)
+    else:
+        # Open orbit (e ≳ 1) or a closed orbit with a huge aphelion: r(f)
+        # grows very fast near the (asymptotic, for e≥1) or maximum (for
+        # e<1) angle — capping by a fixed fraction of that angle can still
+        # reach hundreds of AU for e close to 1 (e.g. e=1.00036 reaches
+        # ~157 AU at a 97%-of-asymptote cutoff). Solve the conic formula
+        # directly for the true anomaly at which r = r_max_plot instead.
+        cos_f_lim = np.clip((q * (1.0 + e) / r_max_plot - 1.0) / e, -1.0, 1.0)
+        f_lim     = np.arccos(cos_f_lim)
+        f_arr = np.linspace(-f_lim, f_lim, n_pts)
+
+    r_arr = q * (1.0 + e) / (1.0 + e * np.cos(f_arr))
+    xo, yo = r_arr * np.cos(f_arr), r_arr * np.sin(f_arr)
+    orbit_xyz = np.outer(xo, P) + np.outer(yo, Q)   # (n_pts, 3), full 3D
+
+    comet_xyz = r_C
+    peri_xyz  = q * P
+
+    theta = np.linspace(0, 2 * np.pi, 200)
+    # Earth's orbit lies in the ecliptic plane by definition → Z = 0
+    earth_orbit_xyz = np.column_stack([np.cos(theta), np.sin(theta),
+                                        np.zeros_like(theta)])
+    r_E       = earth_pos(obs_jd)
+    earth_xyz = r_E
+
+    return dict(orbit_xyz=orbit_xyz, comet_xyz=comet_xyz, perihelion_xyz=peri_xyz,
+                earth_orbit_xyz=earth_orbit_xyz, earth_xyz=earth_xyz,
+                sun_xyz=np.array([0.0, 0.0, 0.0]), q=q, e=e,
+                r_helio=r_helio_now, name=comet_el.get('name', 'Comet'),
+                obs_str=jd_to_str(obs_jd),
+                velocity_dir_xyz=v_hat, r_max_plot=r_max_plot)
+
+
+def _set_3d_equal_aspect(ax, points_list):
+    """Force equal X/Y/Z scaling on a 3D Axes (mplot3d doesn't do this by default)."""
+    all_pts  = np.vstack(points_list)
+    mins, maxs = all_pts.min(axis=0), all_pts.max(axis=0)
+    centers    = (mins + maxs) / 2.0
+    half_range = max((maxs - mins).max() / 2.0, 1e-3)
+    ax.set_xlim(centers[0] - half_range, centers[0] + half_range)
+    ax.set_ylim(centers[1] - half_range, centers[1] + half_range)
+    ax.set_zlim(centers[2] - half_range, centers[2] + half_range)
+    try:
+        ax.set_box_aspect((1, 1, 1))   # matplotlib ≥ 3.3
+    except Exception:
+        pass
+
+
+def draw_orbit_diagram(ax, diagram: dict, dark: bool = True):
+    """
+    Render the 3D orbit diagram built by compute_orbit_diagram() onto a
+    matplotlib 3D Axes (created with projection='3d'). Shared between the
+    CLI/standalone path and the GUI's ORBIT VIEW window so the two never
+    visually drift apart. Mouse-drag rotates the view interactively when
+    embedded in a Qt canvas.
+
+    `dark` selects between the dark-space and light-observatory color
+    schemes (v3.0) — this module has no dependency on CometTailGUI's Qt
+    theme system, so the caller just passes a bool (e.g.
+    dark=(CURRENT_THEME == "dark")) rather than importing a theme dict.
+    """
+    if dark:
+        c = dict(bg='#060b14', pane='#0a1220', pane_edge='#1a2a40',
+                 tick='#2a4060', label='#3a6080', legend_bg='#060b14',
+                 legend_edge='#1a2a40', legend_text='white', comet_fill='#ffffff')
+    else:
+        c = dict(bg='#ffffff', pane='#f3f5f8', pane_edge='#c6cdd4',
+                 tick='#57606a', label='#3a6080', legend_bg='#ffffff',
+                 legend_edge='#c6cdd4', legend_text='#24292f', comet_fill='#1c2128')
+
+    ax.set_facecolor(c['bg'])
+    try:
+        ax.xaxis.pane.set_facecolor(c['pane'])
+        ax.yaxis.pane.set_facecolor(c['pane'])
+        ax.zaxis.pane.set_facecolor(c['pane'])
+        ax.xaxis.pane.set_edgecolor(c['pane_edge'])
+        ax.yaxis.pane.set_edgecolor(c['pane_edge'])
+        ax.zaxis.pane.set_edgecolor(c['pane_edge'])
+    except Exception:
+        pass
+    ax.tick_params(colors=c['tick'])
+
+    op = diagram['orbit_xyz']
+    ax.plot(op[:, 0], op[:, 1], op[:, 2], '-', color='#7ab8ff', lw=1.3, zorder=2,
+            label=f"Orbit (q={diagram['q']:.3f} AU, e={diagram['e']:.4f})")
+
+    eo = diagram['earth_orbit_xyz']
+    ax.plot(eo[:, 0], eo[:, 1], eo[:, 2], '--', color='#2a7a4a', lw=0.8,
+            alpha=0.7, zorder=1, label="Earth's orbit (1 AU, ecliptic plane)")
+
+    # Sun — yellow circle (changed from star marker, v3.0)
+    sx, sy, sz = diagram['sun_xyz']
+    ax.scatter([sx], [sy], [sz], s=260, c='#ffe030', marker='o',
+              edgecolors='#a06800', linewidths=1.2, depthshade=False,
+              zorder=5, label='Sun')
+
+    px, py, pz = diagram['perihelion_xyz']
+    ax.scatter([px], [py], [pz], s=50, c='#ff8030', marker='x',
+              linewidths=1.8, depthshade=False, zorder=4, label='Perihelion')
+
+    ex, ey, ez = diagram['earth_xyz']
+    ax.scatter([ex], [ey], [ez], s=42, c='#40c0ff', marker='o',
+              depthshade=False, zorder=5,
+              label=f"Earth (at {diagram['obs_str']})")
+
+    cx, cy, cz = diagram['comet_xyz']
+    # comet marker fill switches dark/light so it's never a white-on-white
+    # (or near-invisible) blob — the pink edge stays constant either way.
+    ax.scatter([cx], [cy], [cz], s=55, c=c['comet_fill'], marker='o',
+              edgecolors='#ff5078', linewidths=1.4, depthshade=False,
+              zorder=6,
+              label=f"{diagram['name']} (at {diagram['obs_str']}, r☉={diagram['r_helio']:.3f} AU)")
+
+    # Drop-lines to the ecliptic plane (Z=0) — makes the out-of-plane
+    # height of the comet and perihelion immediately readable in 3D.
+    ax.plot([cx, cx], [cy, cy], [0, cz], ':', color='#ff5078', lw=0.9, alpha=0.6, zorder=3)
+    ax.plot([px, px], [py, py], [0, pz], ':', color='#ff8030', lw=0.9, alpha=0.5, zorder=3)
+
+    # Direction-of-motion arrow (v3.0) — heliocentric velocity unit vector
+    # from compute_orbit_diagram(), scaled to a fixed fraction of the same
+    # r_max_plot used to size the whole diagram so it stays a sensibly
+    # visible length regardless of how big/small this particular orbit is.
+    vhx, vhy, vhz = diagram.get('velocity_dir_xyz', (0.0, 0.0, 0.0))
+    if vhx or vhy or vhz:
+        arrow_len = 0.18 * diagram.get('r_max_plot', max(diagram['q'], 1.0))
+        ax.quiver(cx, cy, cz, vhx*arrow_len, vhy*arrow_len, vhz*arrow_len,
+                  color='#00e0a0', linewidth=2.0, arrow_length_ratio=0.3,
+                  zorder=7, label=f"{diagram['name']} direction of motion")
+
+    _set_3d_equal_aspect(ax, [op, eo, np.array([[sx, sy, sz]]),
+                              np.array([[px, py, pz]]), np.array([[ex, ey, ez]]),
+                              np.array([[cx, cy, cz]])])
+
+    ax.set_xlabel('Ecliptic X (AU)', color=c['label'], fontfamily='monospace', fontsize=8)
+    ax.set_ylabel('Ecliptic Y (AU)', color=c['label'], fontfamily='monospace', fontsize=8)
+    ax.set_zlabel('Ecliptic Z (AU)', color=c['label'], fontfamily='monospace', fontsize=8)
+    ax.legend(loc='lower left', fontsize=6, framealpha=0.85,
+              facecolor=c['legend_bg'], edgecolor=c['legend_edge'],
+              labelcolor=c['legend_text'],
+              prop={'family': 'monospace'}, markerscale=0.6,
+              handletextpad=0.4, borderpad=0.5, labelspacing=0.35)
+
+
+def beta_to_size(beta: float, rho_g_cm3: float = 0.5, Qpr: float = 1.0) -> str:
+    """
+    Grain RADIUS (not diameter) for given β and dust density ρ (g/cm³).
+
+    From Burns, Lamy & Soter (1979), Icarus 40, 1, Eq. 19 — derived directly,
+    without the C_pr/Q_pr two-parameter split (see BETA_TO_RADIUS_UM above
+    for why this avoids a factor-of-2 ambiguity present in v2.4):
+        r [µm] = 0.574 · Qpr / (ρ [g/cm³] · β)
+
+    Default ρ = 0.5 g/cm³ (= 500 kg/m³), the Fulle et al. (2016) in-situ
+    Rosetta/67P bulk-density measurement; default Qpr = 1 (appropriate for
+    grains large relative to the wavelength — see Burns et al. 1979).
+    Both are overridable from the GUI's Calculation > Dust particle
+    radius… calculator (v3.0).
+
+    Reference values at ρ = 1 g/cm³, Qpr = 1 (for comparison with older
+    v3.0 output before the default ρ changed):
+        β = 1.0   → r ≈ 0.57 µm   (radiation pressure ≈ gravity)
+        β = 0.1   → r ≈ 5.7 µm
+        β = 0.01  → r ≈ 57 µm
+        β = 0.001 → r ≈ 0.57 mm   (near-orbital, debris trail)
+        (at the ρ=0.5 default, every value above is exactly 2× larger)
     """
     if beta <= 0:
         return '∞'
-    a_um = 1.19 / (beta * rho_g_cm3)
+    a_um = BETA_TO_RADIUS_UM * Qpr / (beta * rho_g_cm3)
     if   a_um >= 10000: return f'{a_um/1000:.1f} mm'
     elif a_um >= 1000:  return f'{a_um/1000:.2f} mm'
     elif a_um >= 1:     return f'{a_um:.1f} µm'
@@ -1293,7 +1656,8 @@ class CometTailVisualizer:
                  image_path: str | None = None,
                  au_per_px: float = 0.001,
                  north_pa: float = 0.0,
-                 title: str = ''):
+                 title: str = '',
+                 rho_d: float = 0.5):
 
         self.comet_el    = comet_el
         self.obs_jd      = obs_jd
@@ -1305,6 +1669,10 @@ class CometTailVisualizer:
         self.au_per_px   = au_per_px
         self.north_pa    = north_pa
         self.title       = title or comet_el.get('name', 'Comet')
+        # Grain bulk density [g/cm³] for the β→radius annotation label.
+        # Default = Fulle et al. (2016); settable directly (like nuc_x,
+        # au_per_px, etc. below) from the GUI's Physical Parameters dialog.
+        self.rho_d       = rho_d
 
         self.model      = None
         self.img_arr    = None
@@ -1452,6 +1820,22 @@ class CometTailVisualizer:
                     color='#ffe030', fontsize=12,
                     ha='center', va='center', zorder=5)
 
+        # Anti-velocity arrow (v3.0) — shows expected lean of a
+        # non-zero-ejection-velocity tail away from the pure antisolar line
+        avx_dir, avy_dir = m.get('antivel_dir', (0.0, 0.0))
+        avlen = np.hypot(avx_dir, avy_dir)
+        if avlen > 1e-10:
+            scale = min(abs(ax.get_xlim()[1] - ax.get_xlim()[0]),
+                        abs(ax.get_ylim()[1] - ax.get_ylim()[0])) * 0.18
+            evx, evy = avx_dir / avlen * scale, avy_dir / avlen * scale
+            ax.annotate('', xy=(evx, evy), xytext=(0, 0),
+                        arrowprops=dict(arrowstyle='->',
+                                        color='#ff5078', lw=1.6),
+                        zorder=4)
+            ax.text(evx * 1.15, evy * 1.15, '−v',
+                    color='#ff5078', fontsize=9, fontfamily='monospace',
+                    ha='center', va='center', zorder=5)
+
         # Nucleus
         ax.plot(0, 0, '+', color='white', ms=12, mew=1.5, zorder=6)
         ax.plot(0, 0, 'o', color='white', ms=3,  zorder=7)
@@ -1595,14 +1979,14 @@ class CometTailVisualizer:
             y -= dy * 0.9
 
         y -= dy * 0.3
-        ax.text(0.05, y, 'β → GRAIN SIZE (ρ=1 g/cm³)', color='#3a6090',
+        ax.text(0.05, y, f'β → GRAIN RADIUS (ρ={self.rho_d:g} g/cm³)', color='#3a6090',
                 fontsize=8, fontweight='bold', **kw)
         y -= dy * 0.6
         n_s = len(self.beta_values)
         for idx, beta in enumerate(self.beta_values):
             c = self.SYNDYNE_CMAP(idx / (n_s - 1) if n_s > 1 else 0.5)
             ax.text(0.05, y, f'β={beta}', color=c, fontsize=7.5, **kw)
-            ax.text(0.95, y, beta_to_size(beta), color='#a0c0d8',
+            ax.text(0.95, y, beta_to_size(beta, self.rho_d), color='#a0c0d8',
                     fontsize=7.5, ha='right', **kw)
             y -= dy * 0.85
 
@@ -1628,6 +2012,8 @@ class CometTailVisualizer:
                                   ls='--', label='Orbital path'))
         handles.append(Line2D([0], [0], color='#ffe030', lw=1.5, marker='>',
                               ms=7, label='Sun direction'))
+        handles.append(Line2D([0], [0], color='#ff5078', lw=1.4, marker='>',
+                              ms=6, label='Anti-velocity (−v)'))
         if handles:
             ax.legend(handles=handles, loc='lower left',
                       fontsize=7.5, framealpha=0.2, facecolor='#060b14',
@@ -1669,6 +2055,21 @@ class CometTailVisualizer:
                         arrowprops=dict(arrowstyle='->',
                                         color='#ffe030', lw=1.8),
                         color='#ffe030', fontsize=12,
+                        ha='center', va='center', zorder=6)
+
+        # Anti-velocity arrow (v3.0)
+        avx, avy = m.get('antivel_dir', (0.0, 0.0))
+        avlen = np.hypot(avx, avy)
+        if avlen > 1e-10:
+            arrow_au = 60 * self.au_per_px
+            tip = sky_to_pixel(avx / avlen * arrow_au,
+                               avy / avlen * arrow_au,
+                               self.nuc_x, self.nuc_y,
+                               self.au_per_px, self.north_pa)
+            ax.annotate('−v', xy=tip, xytext=(self.nuc_x, self.nuc_y),
+                        arrowprops=dict(arrowstyle='->',
+                                        color='#ff5078', lw=1.6),
+                        color='#ff5078', fontsize=9, fontfamily='monospace',
                         ha='center', va='center', zorder=6)
 
         # Nucleus crosshair
