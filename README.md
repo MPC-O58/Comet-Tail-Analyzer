@@ -33,7 +33,6 @@ Download the current release from:
 **[GitHub Releases](https://github.com/MPC-O58/Comet-Tail-Analyzer/releases/latest)**
 
 - **Installer:** recommended for normal Windows use.
-- **Portable ZIP:** extract the complete folder before running. Do not copy only the `.exe`, because the packaged application requires the accompanying libraries and data files.
 
 ### Full user guide
 
