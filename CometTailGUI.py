@@ -2,11 +2,187 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-  CometTailGUI.py  —  Finson–Probstein Comet Dust Tail Analyzer
-  Version 3.0   ·   Teerasak Thaluang (MPC O51/O58)
+  CometTailGUI.py  —  Comet Tail Analyzer (CTA)
+  Finson–Probstein + Monte Carlo Dust Tail Model
+  Version 3.1   ·   Teerasak Thaluang (MPC O51/O58)
   Native Desktop Application (PyQt6 + Matplotlib)
+
+  SPDX-License-Identifier: MIT
+  © 2024–2026 Teerasak Thaluang. See LICENSE for full terms.
+
+  Attribution:
+    Portions of the Monte Carlo module (comet_tail_analyzer.py) are ported
+    from py_COMTAILS (Moreno 2025, A&A 695, A263; F. Moreno, R. Morales &
+    N. Robles, IAA-CSIC; github.com/FernandoMorenoDanvila/py_COMTAILS,
+    MIT License). Specifically:
+      - Schleicher dust phase function coefficients (constants.py)
+      - Sunward hemisphere ejection direction sampling (iejec_mode == 2)
+      - Active-area rotating-nucleus ejection direction (_anisot_dir2 /
+        iejec_mode == 3)
+    All other components (F-P engine, orbital mechanics, COBS integration,
+    GUI, MC core loop, contour extraction) are original to CTA.
+
+  Cite as:
+    Thaluang, T. (2026). RNAAS, doi:10.3847/2515-5172/ae6f90
 =============================================================================
   Changelog:
+    v3.1  • NEW: MC Display now provides Analysis Overlay, Contour
+            Comparison, and Publication Figure presentation modes.
+            Contour-only modes suppress the image background and unrelated
+            F-P annotations, render observed image isophotes in black and
+            Monte Carlo contours in magenta on white, and support projected-
+            distance axes plus direct PNG/TIFF/PDF/SVG figure export.
+    v3.1  • UI: Main window now opens maximized and applies an initial
+            screen-responsive splitter layout so the control panel, plot
+            canvas, and information panel fit the user's available display.
+          • NEW: File > Run F-P Model (F5) runs the same validated
+            Finson–Probstein workflow as the COMPUTE MODEL button, avoiding
+            repeated scrolling in the left control panel.
+    v3.1  • UX FIX: MC report files now default to MC_Report_... instead
+            of MC_inputs_....
+          • UX FIX: Image Setup remains above the CTA main window only;
+            it no longer stays on top of unrelated application windows.
+    v3.1  • UX: Maximum dust age is now derived automatically from the
+            largest Synchrone age; the main F-P panel now accepts one
+            user-interpreted Dominant dust age. MC Q(t) guidance applies the
+            dominant age as a lower bound and maximum age as an upper cap.
+    v3.1  • UI refinement: Q(t) preview and MC-window guidance moved into
+            Simulation > Dust production over time; MC setup now uses
+            three workflow tabs and wider bounded numeric inputs.
+    v3.1  • NEW: Monte Carlo dust morphology module — MCWindow (View >
+            Monte Carlo morphology…) simulates grain ensembles and
+            extracts isophote-style contours, auto-displayed on the
+            main canvas alongside F-P syndynes/synchrones. Grain size
+            power-law distribution, ejection velocity V = V₀·β^γ·r_H^(−κ),
+            optional sunward or active-area (rotating nucleus) direction
+            mode with cos(z) term. Density ρ, albedo p_v, phase function.
+          • NEW: Save/Load .mcin input files — machine-readable JSON;
+            state memory across sessions; comet-mismatch warning on load.
+          • NEW: MC report — preview then save plain-text summary;
+            shows actual grain ejection speed, not raw V₀.
+          • NEW: Contour min. scale slider (AU) — dynamic floor =
+            max(MC grid pixel, image AU/px); auto-updates per run
+            and image scale; user value preserved across re-runs.
+          • NEW: Sun direction / Anti-velocity (−v) / Nucleus crosshair
+            toggle checkboxes in DISPLAY panel.
+          • NEW: Sun/anti-velocity arrows shortened 50% (6.5% view width).
+          • BUG FIX: percentile floor for contour extraction now computed
+            from pre-Gaussian density — smoothing no longer shifts
+            contour positions (before: more smooth → lower floor →
+            contours expanded outward from coma).
+          • BUG FIX: loaded smooth_sigma_au no longer overwritten by
+            auto-fill on first run after loading .mcin.
+          • BUG FIX: MC overlay info box now shows real grain speed
+            (V₀·β^γ·r_H^(−κ)) instead of raw V₀.
+          • MC contour visibility now automatic (no checkbox required);
+            MC appearance controls moved to MC window Display tab.
+          • V₀ spinbox range extended to 2000 m/s for interstellar
+            comet models (was 500 m/s).
+    v3.0.7 • NEW: Orbit Position window gained a "🔍 Zoom to inner solar
+            system" checkbox + AU spinbox (default 2.0). For comets well
+            beyond ~1 AU, the default view auto-fits to the whole orbit,
+            which collapses Earth and the Sun down to a barely-
+            distinguishable point near the center. Enabling this instead
+            forces a fixed Sun-centered view of the chosen AU half-width
+            — Earth's orbit (and its separation from the Sun) is then
+            always clearly visible, at the cost of the comet itself
+            being off-screen if it's currently farther out than that
+            value. Reuses the already-computed orbit diagram data —
+            toggling only changes the view, not a recomputation. Pairs
+            with comet_tail_analyzer.py v3.0.2.
+    v3.0.6 • BUG FIX: pre-filling the observation date from a FITS
+            file's DATE-OBS header keyword truncated it to date_obs[:10]
+            (date only), silently discarding the time-of-day. date_to_jd()
+            already accepts the full ISO-8601 'YYYY-MM-DDTHH:MM:SS[.fff]'
+            format DATE-OBS normally uses, so the whole string is now
+            passed through. Also handles the older convention of a
+            separate TIME-OBS keyword for FITS files that split date and
+            time into two keywords instead of combining them in DATE-OBS.
+          • NEW: Image Setup ▸ "VIEW FITS HEADER" button opens a read-only
+            viewer (FitsHeaderDialog) showing every raw header card of the
+            currently loaded FITS file, with a Copy button. No-op with an
+            explanatory message for JPEG/PNG images, which have no header.
+    v3.0.5 • BUG FIX: the Sun-direction and anti-velocity (−v) arrows in
+            overlay mode used a FIXED length (60 × au_per_px, i.e. always
+            exactly 60 pixels of the ORIGINAL unzoomed image) — once the
+            new free-form Zoom feature (v3.0.2-v3.0.4) let the view get
+            much smaller than the full image, that fixed 60px length
+            started spanning a huge fraction of the now-tiny visible
+            frame. Changed to scale with 13% of the CURRENT (possibly
+            zoomed) view width instead — same percentage-of-view-width
+            approach the standalone (no-image) branch already used, just
+            applied to the overlay branch too. Uses a view_w_px value
+            captured right when the view is set, not a fresh
+            ax.get_xlim() read at arrow-draw time, so it can't be thrown
+            off by matplotlib transiently auto-expanding the axes while
+            plotting curves in between (the same effect the existing
+            end-of-function safety reset guards against).
+    v3.0.4 • BUG FIX: v3.0.3's reconnect-after-clear() fix didn't actually
+            solve it either — Compute Model still reset to the full image
+            regardless of toolbar pan/zoom. Replaced the whole callback-
+            based approach with something architecturally simpler and
+            more robust: draw_model()/draw_image_preview() now read the
+            axes' CURRENT xlim/ylim directly (via ax.get_xlim()/
+            get_ylim()) at the top of the function, before ax.clear()
+            wipes it, and reuse that view when redrawing the overlay
+            instead of resetting to the full image. No separate lock
+            variables, no callbacks, nothing that can silently go stale —
+            the axes' own state IS the source of truth. RESET TO FULL
+            IMAGE now just sets the axes directly, which the next redraw
+            picks up the same way. Removed: PlotCanvas._locked_xlim/
+            _locked_ylim/_suppress_lock_capture/_connect_view_callbacks/
+            _on_axes_view_changed (all dead weight from the abandoned
+            v3.0.2/v3.0.3 approach).
+    v3.0.3 • BUG FIX: the v3.0.2 view-lock redesign never actually worked
+            — Compute Model kept resetting to the full image regardless
+            of any toolbar pan/zoom. Cause: self.ax.clear() silently
+            resets matplotlib's internal callback registry to empty, and
+            draw_image_preview()/draw_model() both call ax.clear() on
+            EVERY redraw — so the xlim_changed/ylim_changed connections
+            made once in PlotCanvas.__init__() went dead the moment the
+            very first redraw happened (the initial image preview),
+            before the user ever got a chance to pan/zoom. No error was
+            raised; the callback just silently stopped firing. Fixed by
+            extracting the connection into _connect_view_callbacks() and
+            calling it again after every single ax.clear() (3 call
+            sites: _draw_empty, draw_image_preview, draw_model) instead
+            of relying on the one-time __init__ connection.
+    v3.0.2 • Redesigned the Zoom feature from v3.0/v3.0.1's discrete
+            1x/2x/3x/4x presets (always a square box centered on the
+            nucleus) to free-form use of the plot toolbar's own zoom
+            (rubber-band) and pan (hand) tools directly on the overlay
+            image. Whatever x/y range that leaves the axes at is now
+            captured automatically (PlotCanvas._on_axes_view_changed,
+            gated on an image actually being loaded rather than a
+            zoom-level counter) and used by draw_model() for both the
+            initial overlay setup and its end-of-function safety reset —
+            so any arbitrary, independently-sized x and y range is
+            respected, not just a square box. The 4 preset radio buttons
+            are gone, replaced by a single "RESET TO FULL IMAGE" button
+            that clears the lock.
+    v3.0.1 • Extended Zoom from 1x/2x/3x to 1x/2x/3x/4x (same centered-on-
+            nucleus, locked-across-Compute-Model behavior as v3.0 — see
+            below — just one more preset level).
+    v3.0  • NEW: Zoom 1x/2x/3x for the loaded overlay image (JPEG/PNG/
+            FITS alike), in the Image Setup dialog next to Nucleus
+            Position. Selecting 2x/3x centers a box of that size around
+            the current nucleus position; drag-pan afterward with the
+            plot toolbar's hand tool to fine-tune the comet's position
+            within it. The resulting view is LOCKED — Compute Model no
+            longer resets the overlay back to the full image every time
+            it re-runs (the previous unconditional reset, including an
+            end-of-draw "force back to image bounds" safety net, was
+            wiping out any zoom/pan immediately). Back to 1x clears the
+            lock. The lock also resets automatically whenever the
+            underlying image itself changes (new file loaded, cleared,
+            or rotated N-up), since a previous pixel-coordinate lock
+            wouldn't correspond to a different image's dimensions.
+            Implementation: PlotCanvas tracks zoom_level/_locked_xlim/
+            _locked_ylim and listens for matplotlib's xlim_changed/
+            ylim_changed callbacks to capture manual toolbar pans into
+            the lock, guarded by a _suppress_lock_capture flag so the
+            programmatic resets draw_model() itself makes don't
+            re-trigger capturing themselves.
     v3.0  • REMOVED the "Activity: VERY HIGH (outburst / hyperactive
             candidate)"-style categorical line from the Dust production
             rate… calculator's output. Afρ defaults to a placeholder
@@ -25,7 +201,7 @@
             with its own radius on its own line instead.
     v3.0  • Default tuning: Auto Stretch now sets Contrast=-150 (was
             200), Intensity=-300 (unchanged); Isophote levels default
-            changed 6→3, Isophote smoothing default changed 2.0→6.0 px.
+            kept at 6 levels and 2.0 px smoothing by default.
     v3.0  • Contrast/Intensity now restretch the image live as the
             sliders move — REMOVED the separate "Apply Stretch" button
             entirely. Auto Stretch still exists (sets both sliders to a
@@ -379,9 +555,10 @@
 =============================================================================
 """
 
-__version__ = "2.5"
+__version__ = "3.1"
+# Runtime patch: partial COBS coverage blocks auto-recommendation, not user-selected MC runs.
 
-import sys, os, warnings, csv
+import sys, os, warnings, csv, webbrowser, logging
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -394,10 +571,10 @@ from PyQt6.QtWidgets import (
     QSplitter, QFileDialog, QStatusBar, QProgressBar, QMessageBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QTextEdit,
     QDialog, QDialogButtonBox, QFormLayout, QSizePolicy, QMenuBar,
-    QMenu, QRadioButton,
+    QMenu, QRadioButton, QButtonGroup,
 )
 from PyQt6.QtCore import (
-    Qt, QThread, pyqtSignal, QTimer, QSize,
+    Qt, QThread, pyqtSignal, QTimer, QSize, QSettings,
 )
 from PyQt6.QtGui import (
     QFont, QIcon, QColor, QPalette, QAction, QPixmap, QCursor,
@@ -414,6 +591,8 @@ from matplotlib.backends.backend_qtagg import (
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 import matplotlib.patches as mpatches
+import matplotlib.patheffects as patheffects
+from matplotlib.ticker import FuncFormatter
 
 # ── Physics engine ────────────────────────────────────────────────────────────
 import importlib.util
@@ -948,7 +1127,7 @@ class ComputeWorker(QThread):
     finished = pyqtSignal(dict)
     error    = pyqtSignal(str)
 
-    def __init__(self, comet_el, obs_jd, betas, ages, max_age, n_pts):
+    def __init__(self, comet_el, obs_jd, betas, ages, max_age, n_pts, ejection=None):
         super().__init__()
         self.comet_el = comet_el
         self.obs_jd   = obs_jd
@@ -956,6 +1135,7 @@ class ComputeWorker(QThread):
         self.ages     = ages
         self.max_age  = max_age
         self.n_pts    = n_pts
+        self.ejection = ejection
 
     def run(self):
         try:
@@ -963,7 +1143,8 @@ class ComputeWorker(QThread):
             model = cta.compute_model(
                 self.comet_el, self.obs_jd,
                 self.betas, self.ages,
-                self.max_age, self.n_pts)
+                self.max_age, self.n_pts,
+                ejection=self.ejection)
             self.progress.emit(100, "Done")
             self.finished.emit(model)
         except Exception as ex:
@@ -983,6 +1164,100 @@ class FetchWorker(QThread):
         try:
             el = cta.fetch_comet(self.desig, date=self.date or None)
             self.finished.emit(el)
+        except Exception as ex:
+            self.error.emit(str(ex))
+
+
+class UpdateCheckWorker(QThread):
+    """v3.1 — runs cta.check_for_update() off the UI thread. cta.check_
+    for_update() itself never raises (see its docstring) and returns
+    either an update-info dict or None; this worker just relays that
+    straight through `finished`. There is deliberately no `error`
+    signal — a failed/rate-limited update check is not an error worth
+    surfacing to the user, just a None result."""
+    finished = pyqtSignal(object)   # dict (update available) or None
+
+    def run(self):
+        try:
+            result = cta.check_for_update()
+        except Exception:
+            result = None   # belt-and-suspenders; check_for_update() already does this
+        self.finished.emit(result)
+
+
+class MCWorker(QThread):
+    """v3.1 — runs cta.compute_morphology_mc() off the UI thread. Unlike
+    ComputeWorker's per-curve loop (a handful of syndynes/synchrones,
+    fast), this loops over n_particles (potentially thousands) of
+    individual dust_position_isotropic() calls — slow enough on the UI
+    thread to visibly freeze the window, hence its own worker rather
+    than reusing ComputeWorker."""
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(dict)
+    error    = pyqtSignal(str)
+
+    def __init__(self, comet_el, obs_jd, beta_range, gamma_size, max_age,
+                n_particles, v0_coeff, gamma, m_exp, seed=None,
+                north_pa_deg=0.0, rotation_offset_deg=0.0, qt_weights=None,
+                active_area=None, rho_g_cm3=0.5, sunward=False, sunward_expocos=1.0,
+                sunward_reference="emission", sunward_cone_half_angle_deg=90.0,
+                require_projected_sunward=False,
+                phase_law="schleicher", phase_linear_beta=0.024,
+                phase_linear_m_oe=0.28, phase_linear_w_oe=1.5,
+                size_dist_table=None, p_v=0.04, grid_npix=300):
+        super().__init__()
+        self.comet_el, self.obs_jd = comet_el, obs_jd
+        self.beta_range, self.gamma_size = beta_range, gamma_size
+        self.max_age, self.n_particles = max_age, n_particles
+        self.v0_coeff, self.gamma, self.m_exp = v0_coeff, gamma, m_exp
+        self.seed = seed
+        self.north_pa_deg, self.rotation_offset_deg = north_pa_deg, rotation_offset_deg
+        self.qt_weights = qt_weights
+        self.active_area = active_area
+        self.rho_g_cm3 = rho_g_cm3
+        self.sunward = sunward
+        self.sunward_expocos = sunward_expocos
+        self.sunward_reference = sunward_reference
+        self.sunward_cone_half_angle_deg = sunward_cone_half_angle_deg
+        self.require_projected_sunward = require_projected_sunward
+        self.phase_law = phase_law
+        self.phase_linear_beta = phase_linear_beta
+        self.phase_linear_m_oe = phase_linear_m_oe
+        self.phase_linear_w_oe = phase_linear_w_oe
+        self.size_dist_table = size_dist_table
+        self.p_v = p_v
+        self.grid_npix = grid_npix
+
+    def _progress_callback(self, fraction, message):
+        try:
+            pct = int(round(float(fraction) * 100.0))
+        except Exception:
+            pct = 0
+        pct = max(0, min(100, pct))
+        self.progress.emit(pct, str(message))
+
+    def run(self):
+        try:
+            result = cta.compute_morphology_mc(
+                self.comet_el, self.obs_jd, self.beta_range, self.gamma_size,
+                self.max_age, self.n_particles,
+                v0_coeff=self.v0_coeff, gamma=self.gamma, m_exp=self.m_exp,
+                seed=self.seed, north_pa_deg=self.north_pa_deg,
+                rotation_offset_deg=self.rotation_offset_deg,
+                qt_weights=self.qt_weights, active_area=self.active_area,
+                rho_g_cm3=self.rho_g_cm3,
+                sunward=self.sunward, sunward_expocos=self.sunward_expocos,
+                sunward_reference=self.sunward_reference,
+                sunward_cone_half_angle_deg=self.sunward_cone_half_angle_deg,
+                require_projected_sunward=self.require_projected_sunward,
+                phase_law=self.phase_law,
+                phase_linear_beta=self.phase_linear_beta,
+                phase_linear_m_oe=self.phase_linear_m_oe,
+                phase_linear_w_oe=self.phase_linear_w_oe,
+                size_dist_table=self.size_dist_table, p_v=self.p_v,
+                grid_npix=self.grid_npix,
+                progress_callback=self._progress_callback)
+            self.finished.emit(result)
         except Exception as ex:
             self.error.emit(str(ex))
 
@@ -1016,7 +1291,18 @@ class PlotCanvas(QWidget):
         self.north_pa  = 0.0
         self._vis = dict(synd=True, sync=True, orbit=True, isophote=False,
                          isophote_levels=6, isophote_smooth=2.0, lw=1.5, alpha=0.85,
-                         orbit_lw=1.0, orbit_alpha=0.7)
+                         orbit_lw=1.5, orbit_alpha=1.0, mc_contour=False)
+        # Phase 2 (v3.1) — paths from extract_morphology_contours(), pushed
+        # in by MainWindow.set_mc_contours() (called from the MC popup, via
+        # an explicit reference — NOT Qt parent/child, since that window
+        # deliberately uses parent=None; see MCWindow's own comment on why).
+        # Each path is an (N,2) AU [ξ,η] array, drawn through the SAME
+        # to_px()/prep() pipeline as syndyne/synchrone curves below — one
+        # rendering path, so it can't develop its own separate orientation
+        # bug the way the standalone popup's plot did.
+        self.mc_contours = []
+        self.mc_info = None   # v3.1 — info dict for the optional parameter box
+
         self._draw_empty()
 
     # ── Nucleus picking ───────────────────────────────────────────────────
@@ -1057,6 +1343,11 @@ class PlotCanvas(QWidget):
     def draw_image_preview(self, img_arr: np.ndarray, filename: str = "",
                            wcs_info: dict = None):
         """Show image immediately on open, with compass and WCS info overlay."""
+        prev_xlim = prev_ylim = None
+        if self._imgArr is not None:
+            prev_xlim = self.ax.get_xlim()
+            prev_ylim = self.ax.get_ylim()
+
         self._imgArr = img_arr
         self.ax.clear()
         self.fig.patch.set_facecolor("black")
@@ -1067,8 +1358,29 @@ class PlotCanvas(QWidget):
         h, w = img_arr.shape[:2]
         self.ax.imshow(img_arr, origin="upper", aspect="equal",
                        extent=[0, w, h, 0], zorder=0)
-        self.ax.set_xlim(0, w)
-        self.ax.set_ylim(h, 0)
+
+        # Preserve observational isophotes when model overlays are cleared.
+        # Isophotes are derived from the image, not from either the F-P or
+        # Monte Carlo model, so CLEAR ALL MODELS should leave them visible.
+        if self._vis.get("isophote", False):
+            lum, lvl = _compute_isophote_levels(
+                img_arr,
+                n_levels=self._vis.get("isophote_levels", 6),
+                smooth_sigma=self._vis.get("isophote_smooth", 2.0))
+            if lum is not None and lvl is not None and len(lvl) >= 2:
+                try:
+                    self.ax.contour(
+                        lum, levels=lvl, origin="upper",
+                        extent=[0, w, h, 0], colors=ISOPHOTE_COLOR,
+                        linewidths=0.6, alpha=0.75, zorder=1)
+                except Exception:
+                    pass
+        if prev_xlim is not None and prev_ylim is not None:
+            self.ax.set_xlim(*prev_xlim)
+            self.ax.set_ylim(*prev_ylim)
+        else:
+            self.ax.set_xlim(0, w)
+            self.ax.set_ylim(h, 0)
         self.ax.tick_params(labelcolor="#3a5070", labelsize=8, color="#1a2540")
         self.ax.set_xlabel("X (pixels)", color="#3a6080", fontsize=9, fontfamily=MF)
         self.ax.set_ylabel("Y (pixels)", color="#3a6080", fontsize=9, fontfamily=MF)
@@ -1136,34 +1448,87 @@ class PlotCanvas(QWidget):
 
     # ── Main draw ─────────────────────────────────────────────────────────
     def draw_model(self, model, img_arr=None, fixed_xlim=None, fixed_ylim=None):
+        # Capture the CURRENT view — whatever a previous draw_model() call
+        # set, or whatever the user's toolbar pan/zoom has since changed
+        # it to — directly from the axes, BEFORE ax.clear() wipes it. This
+        # is what makes the overlay view persist across Compute Model
+        # re-runs. (An earlier attempt used matplotlib's xlim_changed/
+        # ylim_changed callbacks instead; ax.clear() silently resets that
+        # registry on every redraw, so the callback kept going dead with
+        # no visible error. Reading the axes' own current state directly
+        # has no such failure mode — it's always accurate by definition.)
+        prev_xlim = prev_ylim = None
+        if self._imgArr is not None:
+            prev_xlim = self.ax.get_xlim()
+            prev_ylim = self.ax.get_ylim()
+
         self._model  = model
         self._imgArr = img_arr
         self.ax.clear()
-        self.ax.set_facecolor(BG)
-        self.fig.patch.set_facecolor(BG)
-        for sp in self.ax.spines.values():
-            sp.set_edgecolor("#1a2540")
-        self.ax.tick_params(labelcolor="#2a4060", labelsize=8, color="#1a2540")
-        self.ax.grid(color="#0d1a2e", lw=0.4, zorder=0)
-
         overlay = img_arr is not None
+        view_style = self._vis.get("mc_view_style", "analysis")
+        contour_only = view_style in ("contour", "publication")
+        publication = view_style == "publication"
+        background_mode = self._vis.get(
+            "mc_background", "white" if contour_only else "image")
+        white_canvas = background_mode == "white"
+        grayscale_safe = bool(self._vis.get("grayscale_safe", False))
+        observed_color = self._vis.get(
+            "observed_color", "black" if contour_only else ISOPHOTE_COLOR)
+        observed_ls = self._vis.get("observed_ls", "-")
+        model_color = self._vis.get("model_color", "#ff3399")
+        model_ls = self._vis.get("model_ls", "--")
+        if grayscale_safe:
+            observed_color, observed_ls = "black", "-"
+            model_color, model_ls = "black", "--"
+
+        if white_canvas:
+            self.ax.set_facecolor("white")
+            self.fig.patch.set_facecolor("white")
+            for sp in self.ax.spines.values():
+                sp.set_edgecolor("black")
+            self.ax.tick_params(labelcolor="black", labelsize=8, color="black",
+                                direction="in", top=True, right=True)
+            self.ax.grid(False)
+        else:
+            self.ax.set_facecolor(BG)
+            self.fig.patch.set_facecolor(BG)
+            for sp in self.ax.spines.values():
+                sp.set_edgecolor("#1a2540")
+            self.ax.tick_params(labelcolor="#2a4060", labelsize=8,
+                                color="#1a2540")
+            self.ax.grid(color="#0d1a2e", lw=0.4, zorder=0)
 
         # ── AU → degree conversion factor (standalone only) ──────────────
         r_geo = model["info"].get("r_geo", 1.0)
         K = (180.0 / np.pi) / r_geo   # deg per AU  (small-angle, accurate for <5°)
 
         if overlay:
-            # Draw image
+            # Draw the raster image only in analysis mode.  Contour-only
+            # modes still use img_arr as the source of the observed
+            # isophotes and retain its pixel/WCS geometry, but deliberately
+            # suppress the background so the comparison can be exported as
+            # a clean paper figure.
             h_img, w_img = img_arr.shape[:2]
-            self.ax.imshow(img_arr, origin="upper", aspect="equal",
-                           extent=[0, w_img, h_img, 0], zorder=0)
-            self.ax.set_xlim(0, w_img)
-            self.ax.set_ylim(h_img, 0)
-            self.ax.set_xlabel("X (pixels)", color="#3a6080", fontfamily=MF)
-            self.ax.set_ylabel("Y (pixels)", color="#3a6080", fontfamily=MF)
+            if background_mode == "image":
+                self.ax.imshow(img_arr, origin="upper", aspect="equal",
+                               extent=[0, w_img, h_img, 0], zorder=0)
+            if prev_xlim is not None and prev_ylim is not None:
+                self.ax.set_xlim(*prev_xlim)
+                self.ax.set_ylim(*prev_ylim)
+                view_w_px = abs(prev_xlim[1] - prev_xlim[0])
+            else:
+                self.ax.set_xlim(0, w_img)
+                self.ax.set_ylim(h_img, 0)
+                view_w_px = w_img
+            axis_color = "black" if white_canvas else "#3a6080"
+            self.ax.set_xlabel("X (pixels)", color=axis_color, fontfamily=MF)
+            self.ax.set_ylabel("Y (pixels)", color=axis_color, fontfamily=MF)
 
             # ── Isophote overlay (v3.0) — traced from the loaded image ────
-            if self._vis.get("isophote", False):
+            show_observed = bool(self._vis.get("observed_show", True)) and (
+                self._vis.get("isophote", False) or contour_only)
+            if show_observed:
                 lum, lvl = _compute_isophote_levels(
                     img_arr,
                     n_levels=self._vis.get("isophote_levels", 6),
@@ -1172,8 +1537,10 @@ class PlotCanvas(QWidget):
                     try:
                         self.ax.contour(lum, levels=lvl, origin="upper",
                                         extent=[0, w_img, h_img, 0],
-                                        colors=ISOPHOTE_COLOR,
-                                        linewidths=0.6, alpha=0.75, zorder=1)
+                                        colors=observed_color,
+                                        linewidths=self._vis.get("observed_lw", 0.6),
+                                        alpha=self._vis.get("observed_alpha", 0.75),
+                                        linestyles=observed_ls, zorder=2)
                     except Exception:
                         pass   # malformed/flat image — skip silently, never block the plot
 
@@ -1355,7 +1722,7 @@ class PlotCanvas(QWidget):
             return xs[best_i], ys[best_i], True
 
         # Orbital path
-        if self._vis["orbit"] and model["orbit"]:
+        if (not contour_only) and self._vis["orbit"] and model["orbit"]:
             op = np.array(model["orbit"])
             if overlay:
                 xs, ys = zip(*[to_px(p[0], p[1]) for p in op])
@@ -1481,7 +1848,7 @@ class PlotCanvas(QWidget):
 
         # Syndynes — draw with proper clipping after NaN interpolation
         # prep() interpolates NaN gaps, then matplotlib clips to axes bounds
-        if self._vis["synd"]:
+        if (not contour_only) and self._vis["synd"]:
             for idx, synd in enumerate(model["syndynes"]):
                 col  = SYNDYNE_COLORS[idx % len(SYNDYNE_COLORS)]
                 xv, yv = prep(synd["xi"], synd["eta"])
@@ -1494,7 +1861,7 @@ class PlotCanvas(QWidget):
                                  color=col, **_lbl_kw)
 
         # Synchrones — draw with clipping after interpolation
-        if self._vis["sync"]:
+        if (not contour_only) and self._vis["sync"]:
             for idx, sync in enumerate(model["synchrones"]):
                 col  = SYNC_COLORS[idx % len(SYNC_COLORS)]
                 xv, yv = prep(sync["xi"], sync["eta"])
@@ -1508,24 +1875,112 @@ class PlotCanvas(QWidget):
                     self.ax.text(lx, ly, f"t−{sync['age']}d",
                                  color=col, **_lbl_kw)
 
+        # MC morphology contour (v3.1, Phase 2) — same to_px()/prep()
+        # pipeline as syndynes/synchrones above, so it shares their
+        # already-correct orientation handling rather than needing its own.
+        # Own width/opacity sliders (not tied to the syndyne ones). Plain
+        # dashed line — an earlier version added a black+white double
+        # outline (path_effects) for visibility on any background, but with
+        # several nested contour levels overlapping it read as a blurry
+        # band rather than a clean line, so that's been dropped in favour
+        # of this simpler look.
+        if self._vis.get("mc_contour") and self.mc_contours:
+            mc_lw    = self._vis.get("mc_lw", 1.2)
+            mc_alpha = self._vis.get("mc_alpha", 0.95)
+            for path in self.mc_contours:
+                xv, yv = prep(path[:, 0], path[:, 1])
+                self.ax.plot(xv, yv, color=model_color, lw=mc_lw,
+                            alpha=mc_alpha, ls=model_ls, zorder=3, clip_on=True)
+
+            # Optional parameter summary box (v3.1) — off by default (see
+            # the DISPLAY checkbox's tooltip for why); bottom-right corner,
+            # same visual style as the WCS info box (top-right, see
+            # draw_image_preview()) but on the opposite corner so the two
+            # never overlap.
+            if self._vis.get("mc_info_box") and self.mc_info:
+                info  = self.mc_info
+                b_lo, b_hi = info['beta_range']
+                rho_used   = info.get('rho_g_cm3', 0.5)
+                single_size = (b_lo == b_hi)
+
+                def _fmt_um(a):
+                    return f"{a:.0f}" if a >= 10 else f"{a:.2g}"
+
+                if single_size:
+                    a_um = cta._beta_to_radius_um(b_lo, rho_used)
+                    grain_str = f"{_fmt_um(a_um)} µm"
+                else:
+                    a_max = cta._beta_to_radius_um(b_lo, rho_used)
+                    a_min = cta._beta_to_radius_um(b_hi, rho_used)
+                    grain_str = f"{_fmt_um(a_min)}–{_fmt_um(a_max)} µm"
+
+                speed_str = ""
+                if info['v0_coeff'] != 0:
+                    r_h = info.get('r_helio_au')
+                    if r_h:
+                        v_hi_raw = cta.real_ejection_speed_ms(
+                            info['v0_coeff'], b_hi, r_h, info['gamma'], info['m_exp'])
+                        v_lo_raw = cta.real_ejection_speed_ms(
+                            info['v0_coeff'], b_lo, r_h, info['gamma'], info['m_exp'])
+                        v_lo_s, v_hi_s = sorted([float(v_lo_raw), float(v_hi_raw)])
+                        speed_str = (f"{v_lo_s:.1f} m/s" if single_size
+                                     else f"{v_lo_s:.1f}–{v_hi_s:.1f} m/s")
+
+                # Ejection mode label
+                if info.get('active_area_used'):
+                    mode_str = "Active area"
+                elif info.get('sunward_used'):
+                    cone = float(info.get('sunward_cone_half_angle_deg', 90.0))
+                    ref  = info.get('sunward_reference', 'emission')
+                    mode_str = ("Sunward hemisphere" if cone >= 89.999
+                                else f"Sunward cone {cone:.0f}°")
+                    if ref == 'observation':
+                        mode_str += " (legacy ref)"
+                else:
+                    mode_str = "Isotropic"
+
+                lines = ["MONTE CARLO MODEL"]
+                lines.append(f"Grain size: {grain_str}")
+                if not single_size:
+                    lines.append(f"Size index: {info['gamma_size']:.2g}")
+                lines.append(f"Particles: {info['n_used']:,}")
+                lines.append(f"Dust release window: \u2264 {info['max_age']:.0f} d")
+                if speed_str:
+                    lines.append(f"Ejection speed: {speed_str}")
+                lines.append(f"Model mode: {mode_str}")
+
+                # Build block with title first - single ax.text call, no overlap
+                block = "\n".join(lines)
+                x_pos = 0.98
+                y_pos = 0.02 if self._imgArr is not None else 0.98
+                va    = "bottom" if self._imgArr is not None else "top"
+
+                self.ax.text(x_pos, y_pos, block,
+                             transform=self.ax.transAxes,
+                             color="#ff99cc", fontsize=8, fontfamily=MF,
+                             ha="right", va=va,
+                             linespacing=1.7,
+                             bbox=dict(boxstyle="round,pad=0.6",
+                                       facecolor="#0d0d0d",
+                                       alpha=0.82,
+                                       edgecolor="#ff3399",
+                                       linewidth=0.8),
+                             zorder=9)
+
         # ── Sun direction arrow ───────────────────────────────────────────
         # sun_dir = (xi, eta) pointing FROM COMET TOWARD SUN
         sun_xi, sun_eta = model["sun_dir"]
         slen = np.sqrt(sun_xi**2 + sun_eta**2)
-        if slen > 1e-10:
+        if (not contour_only) and slen > 1e-10 and self._vis.get("show_sun", True):
 
             if overlay:
-                sc = 60 * self.au_per_px
+                sc_px = view_w_px * 0.065               # 6.5% of view width (50% of old 13%)
+                sc = sc_px * self.au_per_px            # → AU, for to_px() below
                 ax_end, ay_end = to_px(sun_xi/slen*sc, sun_eta/slen*sc)
                 ax_start, ay_start = self.nuc_x, self.nuc_y
             else:
-                # ── FIX: abs() to prevent sign flip from inverted x-axis ──
                 xl2 = self.ax.get_xlim()
-                sc  = abs(xl2[1] - xl2[0]) * 0.13  # always positive ✓
-                # In standalone, xi/eta already in degrees via K
-                ax_end   = (sun_xi/slen) * (sc * K / K)   # same as sun_xi/slen*sc_deg
-                ay_end   = (sun_eta/slen) * (sc * K / K)
-                # Actually sc is in degrees since axis is in degrees:
+                sc  = abs(xl2[1] - xl2[0]) * 0.065  # 50% of old 0.13
                 ax_end   = (sun_xi/slen) * sc
                 ay_end   = (sun_eta/slen) * sc
                 ax_start = 0; ay_start = 0
@@ -1540,21 +1995,17 @@ class PlotCanvas(QWidget):
                          ha="center", zorder=7)
 
         # ── Anti-velocity arrow (v3.0) ──────────────────────────────────────
-        # antivel_dir = −(heliocentric velocity), projected onto the sky.
-        # A real (non-zero-ejection-velocity) tail leans toward this
-        # direction rather than the pure antisolar line — same convention
-        # used by Moreno (2025) and Mariblanca-Escalona et al. (2026) to
-        # label their published tail images.
         avx, avy = model.get("antivel_dir", (0.0, 0.0))
         avlen = np.sqrt(avx**2 + avy**2)
-        if avlen > 1e-10:
+        if (not contour_only) and avlen > 1e-10 and self._vis.get("show_antivel", True):
             if overlay:
-                sc = 60 * self.au_per_px
+                sc_px = view_w_px * 0.065               # 50% of old 0.13
+                sc = sc_px * self.au_per_px
                 avx_end, avy_end = to_px(avx/avlen*sc, avy/avlen*sc)
                 avx_start, avy_start = self.nuc_x, self.nuc_y
             else:
                 xl2 = self.ax.get_xlim()
-                sc  = abs(xl2[1] - xl2[0]) * 0.13
+                sc  = abs(xl2[1] - xl2[0]) * 0.065
                 avx_end   = (avx/avlen) * sc
                 avy_end   = (avy/avlen) * sc
                 avx_start = 0; avy_start = 0
@@ -1568,11 +2019,12 @@ class PlotCanvas(QWidget):
                          "−v", color="#ff5078", fontsize=10,
                          fontfamily=MF, ha="center", zorder=7)
 
-        # Nucleus
+        # Nucleus crosshair
         nx = self.nuc_x if overlay else 0.0
         ny = self.nuc_y if overlay else 0.0
-        self.ax.plot(nx, ny, "+", color="white", ms=14, mew=1.8, zorder=10)
-        self.ax.plot(nx, ny, "o", color="white", ms=4,  zorder=11)
+        if (not contour_only) and self._vis.get("show_crosshair", True):
+            self.ax.plot(nx, ny, "+", color="white", ms=14, mew=1.8, zorder=10)
+            self.ax.plot(nx, ny, "o", color="white", ms=4,  zorder=11)
 
         # ── N/E Compass ──────────────────────────────────────────────────
         # Position: lower-right corner in SCREEN axes (fraction 0–1)
@@ -1614,11 +2066,23 @@ class PlotCanvas(QWidget):
             e_dx =  np.cos(npa_r) * aL_c   # positive data x → LEFT on screen after inversion ✓
             e_dy = -np.sin(npa_r) * aL_c
         else:
-            # Overlay: image pixel coords, y increases downward
-            h_img, w_img = self._imgArr.shape[:2] if self._imgArr is not None else (1000, 1000)
-            aL_c = min(w_img, h_img) * 0.038
-            cx   = w_img * 0.07
-            cy   = h_img * 0.07
+            # Overlay: image pixel coords, y increases downward (origin=
+            # "upper" convention, so get_ylim() returns (bottom, top) with
+            # the TOP of the current view at the smaller value).
+            # BUG FIX (v3.1): previously positioned at a fixed fraction of
+            # the FULL image's pixel dimensions (w_img*0.07, h_img*0.07) —
+            # correct only when the view happened to show the whole image.
+            # Zooming into a sub-region (the normal way to actually look
+            # at the comet/tail) moved that fixed point outside the
+            # visible area entirely, making the compass silently vanish
+            # with nothing to explain why. Use the CURRENT axis limits
+            # instead — the same fix the standalone branch above already
+            # had, for the same reason.
+            xl = self.ax.get_xlim()
+            yl = self.ax.get_ylim()
+            aL_c = min(abs(xl[1] - xl[0]), abs(yl[1] - yl[0])) * 0.045
+            cx = xl[0] + (xl[1] - xl[0]) * 0.10
+            cy = yl[1] + (yl[0] - yl[1]) * 0.10   # 10% down from the TOP of the current view
             # North: screen-up = negative py
             n_dx =  np.sin(npa_r) * aL_c
             n_dy = -np.cos(npa_r) * aL_c   # negative py = up in image ✓
@@ -1626,44 +2090,60 @@ class PlotCanvas(QWidget):
             e_dx = -np.cos(npa_r) * aL_c   # negative px = left ✓
             e_dy = -np.sin(npa_r) * aL_c
 
-        # Draw N arrow
-        self.ax.annotate("", xy=(cx + n_dx, cy + n_dy), xytext=(cx, cy),
-                         arrowprops=dict(arrowstyle="->", color="#60c8ff", lw=2.0),
-                         zorder=12)
-        self.ax.text(cx + n_dx * 1.35, cy + n_dy * 1.35, "N",
-                     color="#60c8ff", fontsize=9, ha="center", va="center",
-                     fontfamily=MF, fontweight="bold", zorder=12)
-        # Draw E arrow
-        self.ax.annotate("", xy=(cx + e_dx, cy + e_dy), xytext=(cx, cy),
-                         arrowprops=dict(arrowstyle="->", color="#60c8ff", lw=1.6),
-                         zorder=12)
-        self.ax.text(cx + e_dx * 1.38, cy + e_dy * 1.38, "E",
-                     color="#60c8ff", fontsize=9, ha="center", va="center",
-                     fontfamily=MF, fontweight="bold", zorder=12)
+        if self._vis.get("show_compass", True):
+            # Draw N arrow
+            self.ax.annotate("", xy=(cx + n_dx, cy + n_dy), xytext=(cx, cy),
+                             arrowprops=dict(arrowstyle="->", color="#60c8ff", lw=2.0),
+                             zorder=12)
+            self.ax.text(cx + n_dx * 1.35, cy + n_dy * 1.35, "N",
+                         color="#60c8ff", fontsize=9, ha="center", va="center",
+                         fontfamily=MF, fontweight="bold", zorder=12)
+            # Draw E arrow
+            self.ax.annotate("", xy=(cx + e_dx, cy + e_dy), xytext=(cx, cy),
+                             arrowprops=dict(arrowstyle="->", color="#60c8ff", lw=1.6),
+                             zorder=12)
+            self.ax.text(cx + e_dx * 1.38, cy + e_dy * 1.38, "E",
+                         color="#60c8ff", fontsize=9, ha="center", va="center",
+                         fontfamily=MF, fontweight="bold", zorder=12)
 
         # Legend
         handles = []
-        if self._vis["synd"]:
+        if (not contour_only) and self._vis["synd"]:
             handles.append(Line2D([0],[0], color=SYNDYNE_COLORS[0], lw=1.5,
                                   label="Syndynes  (β = const)"))
-        if self._vis["sync"]:
+        if (not contour_only) and self._vis["sync"]:
             handles.append(Line2D([0],[0], color=SYNC_COLORS[0], lw=1.2,
                                   ls="-.", label="Synchrones (age = const)"))
-        if self._vis["orbit"]:
+        if (not contour_only) and self._vis["orbit"]:
             handles.append(Line2D([0],[0], color="#2050a0", lw=0.9,
                                   ls="--", label="Orbital path"))
-        if self._vis.get("isophote", False) and overlay:
-            handles.append(Line2D([0],[0], color=ISOPHOTE_COLOR, lw=1.2,
-                                  label="Isophotes (image)"))
-        handles.append(Line2D([0],[0], color="#ffe030", lw=1.5,
-                              marker=">", ms=7, label="Sun direction"))
-        handles.append(Line2D([0],[0], color="#ff5078", lw=1.4,
-                              marker=">", ms=6, label="Anti-velocity (−v)"))
-        if handles:
-            self.ax.legend(handles=handles, loc="lower left", fontsize=8,
-                           framealpha=0.2, facecolor="#060b14",
-                           edgecolor="#1a2540", labelcolor="white",
-                           prop={"family": MF})
+        show_observed_legend = overlay and bool(self._vis.get("observed_show", True)) and (
+            self._vis.get("isophote", False) or contour_only)
+        if show_observed_legend:
+            handles.append(Line2D([0],[0], color=observed_color,
+                                  lw=self._vis.get("observed_lw", 0.6),
+                                  ls=observed_ls,
+                                  label="Observed isophotes"))
+        if self._vis.get("mc_contour", False) and self.mc_contours:
+            handles.append(Line2D([0],[0], color=model_color,
+                                  lw=self._vis.get("mc_lw", 1.2), ls=model_ls,
+                                  label="Monte Carlo model"))
+        if not contour_only:
+            handles.append(Line2D([0],[0], color="#ffe030", lw=1.5,
+                                  marker=">", ms=7, label="Sun direction"))
+            handles.append(Line2D([0],[0], color="#ff5078", lw=1.4,
+                                  marker=">", ms=6, label="Anti-velocity (−v)"))
+        if handles and self._vis.get("show_legend", True):
+            if white_canvas:
+                self.ax.legend(handles=handles, loc="lower left", fontsize=8,
+                               framealpha=0.9, facecolor="white",
+                               edgecolor="black", labelcolor="black",
+                               prop={"family": MF})
+            else:
+                self.ax.legend(handles=handles, loc="lower left", fontsize=8,
+                               framealpha=0.2, facecolor="#060b14",
+                               edgecolor="#1a2540", labelcolor="white",
+                               prop={"family": MF})
 
         info = model["info"]
         r_g  = info.get("r_geo", 1.0)
@@ -1672,17 +2152,52 @@ class PlotCanvas(QWidget):
         _sl = np.sqrt(_sxi**2 + _set**2)
         _PsAng = ((np.degrees(np.arctan2(_sxi/_sl, _set/_sl)) + 180.0) % 360) if _sl > 1e-10 else 0.0
         ovr_tag = "  ★obs" if info.get("obs_override") else ""
-        self.ax.set_title(
-            f'{info.get("name","Comet")}   ·   {info["obs_str"]}   ·   Finson–Probstein\n'
-            f'r☉={info["r_helio"]:.4f} AU  ·  Δ={r_g:.4f} AU  ·  '
-            f'Phase={info["phase_angle"]:.1f}°  ·  PsAng={_PsAng:.1f}°{ovr_tag}',
-            color="#7ab8ff", fontsize=9, fontfamily=MF, pad=8)
+        if self._vis.get("show_title", True):
+            if contour_only:
+                self.ax.set_title(
+                    f'{info.get("name","Comet")}  ·  {info["obs_str"]}',
+                    color="black" if white_canvas else "#7ab8ff",
+                    fontsize=9, fontfamily=MF, pad=8)
+            else:
+                self.ax.set_title(
+                    f'{info.get("name","Comet")}   ·   {info["obs_str"]}   ·   Finson–Probstein\n'
+                    f'r☉={info["r_helio"]:.4f} AU  ·  Δ={r_g:.4f} AU  ·  '
+                    f'Phase={info["phase_angle"]:.1f}°  ·  PsAng={_PsAng:.1f}°{ovr_tag}',
+                    color="#7ab8ff", fontsize=9, fontfamily=MF, pad=8)
+        else:
+            self.ax.set_title("")
 
-        # Force axes back to exact image bounds after drawing
-        # (matplotlib may auto-expand axes when curves extend beyond)
+        # Force axes back to the intended view after drawing (matplotlib
+        # may auto-expand axes when curves extend beyond) — same view
+        # chosen at the top of this function (the image's previous pan/
+        # zoom state if there was one, else the full image bounds).
         if overlay:
-            self.ax.set_xlim(0, w_img)
-            self.ax.set_ylim(h_img, 0)
+            if prev_xlim is not None and prev_ylim is not None:
+                self.ax.set_xlim(*prev_xlim)
+                self.ax.set_ylim(*prev_ylim)
+            else:
+                self.ax.set_xlim(0, w_img)
+                self.ax.set_ylim(h_img, 0)
+
+            # Publication coordinate display.  The data remain in pixel
+            # coordinates so the WCS/overlay geometry is untouched; only
+            # the tick labels are converted to projected kilometres at the
+            # comet distance.  Positive X points left and positive Y points
+            # up, matching the usual north-up/east-left presentation.
+            coord_mode = self._vis.get("mc_coordinates", "pixels")
+            if coord_mode == "projected_km":
+                km_per_px = float(self.au_per_px) * 149597870.7
+                self.ax.xaxis.set_major_formatter(FuncFormatter(
+                    lambda x, _pos: f"{(self.nuc_x - x) * km_per_px:.0f}"))
+                self.ax.yaxis.set_major_formatter(FuncFormatter(
+                    lambda y, _pos: f"{(self.nuc_y - y) * km_per_px:.0f}"))
+                axis_color = "black" if white_canvas else "#3a6080"
+                self.ax.set_xlabel("Projected X offset (km)", color=axis_color,
+                                   fontfamily=MF)
+                self.ax.set_ylabel("Projected Y offset (km)", color=axis_color,
+                                   fontfamily=MF)
+            elif coord_mode == "hide":
+                self.ax.set_axis_off()
 
         self.canvas.draw_idle()
 
@@ -1690,7 +2205,7 @@ class PlotCanvas(QWidget):
 #  LEFT CONTROL PANEL
 # ─────────────────────────────────────────────────────────────────────────────
 class ControlPanel(QScrollArea):
-    compute_requested = pyqtSignal(dict, float, list, list, int, int)
+    compute_requested = pyqtSignal(dict, float, list, list, int, int, dict)
     fetch_requested   = pyqtSignal(str, str)
     image_loaded      = pyqtSignal(object)   # object allows None or ndarray
     comet_ready       = pyqtSignal(dict)     # emitted whenever _comet_el is freshly set
@@ -1701,6 +2216,40 @@ class ControlPanel(QScrollArea):
         self.setMinimumWidth(320)
         self.setMaximumWidth(400)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        # v3.1 — ejection-velocity state, set EXCLUSIVELY via
+        # set_ejection_params() from the Monte Carlo window's Run button.
+        # See get_ejection_params()/set_ejection_params() below.
+        self._current_ejection = dict(v_R0=0.0, v_T0=0.0, v_N0=0.0,
+                                      gamma=0.0, m_exp=0.0)
+
+        # v3.1 — replaces the old "MC morphology contour" checkbox: there's
+        # no manual show/hide step anymore, the contour just appears as
+        # soon as a Monte Carlo run is sent to the main canvas, and is
+        # cleared automatically when switching to a different comet. See
+        # MainWindow._on_mc_done() / _on_comet_changed().
+        self._mc_contour_visible = False
+        # v3.1 — MC presentation state, controlled from MCWindow's Display
+        # tab.  The original analysis overlay remains the default; the two
+        # contour-only modes use the loaded image only as the SOURCE of the
+        # observed isophotes while suppressing the raster background.
+        self._mc_style = dict(
+            lw=1.2, alpha=0.95, info_box=True,
+            view_style="analysis",
+            background="image",
+            coordinates="pixels",
+            observed_show=True,
+            observed_color=ISOPHOTE_COLOR,
+            observed_lw=0.6,
+            observed_alpha=0.75,
+            observed_ls="-",
+            model_color="#ff3399",
+            model_ls="--",
+            show_legend=True,
+            show_title=True,
+            show_compass=True,
+            grayscale_safe=False,
+        )
 
         inner = QWidget()
         self.setWidget(inner)
@@ -1827,21 +2376,56 @@ class ControlPanel(QScrollArea):
 
         gm.addWidget(self._lbl("SYNCHRONE AGES  (days, comma-sep.)"))
         self.age_str = QLineEdit("10,30,60,90,120,180")
+        self.age_str.setToolTip(
+            "Enter the F-P synchrone ages to draw. The largest valid age is used\n"
+            "automatically as the maximum dust age and the upper limit for MC guidance.")
         gm.addWidget(self.age_str)
 
-        row1 = QHBoxLayout()
-        row1.addWidget(QLabel("Max age (d)"))
+        # Maximum dust age is derived from the largest listed synchrone age.
+        # Keep a hidden numeric widget because the existing compute/animation
+        # pipeline already reads self.max_age.value().
         self.max_age = QSpinBox()
-        self.max_age.setRange(10, 3650); self.max_age.setValue(200)
-        row1.addWidget(self.max_age)
+        self.max_age.setRange(1, 3650)
+        self.max_age.setValue(180)
+        self.max_age.setVisible(False)
+
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("Maximum dust age"))
+        self.lbl_max_age_auto = QLabel("180 d  — automatic")
+        self.lbl_max_age_auto.setStyleSheet("color:#90d8ff; font-weight:600;")
+        self.lbl_max_age_auto.setToolTip(
+            "Automatically set from the largest valid Synchrone age.\n"
+            "The same value is used as the upper F-P age limit for the\n"
+            "Monte Carlo release-window recommendation.")
+        row1.addWidget(self.lbl_max_age_auto, 1)
         gm.addLayout(row1)
 
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Resolution"))
-        self.n_pts = QSpinBox()
-        self.n_pts.setRange(20, 200); self.n_pts.setValue(70)
-        row2.addWidget(self.n_pts)
+        row2.addWidget(QLabel("Dominant dust age (d)"))
+        self.dominant_age = QDoubleSpinBox()
+        self.dominant_age.setRange(0.0, 3650.0)
+        self.dominant_age.setDecimals(1)
+        self.dominant_age.setSingleStep(5.0)
+        self.dominant_age.setSuffix(" d")
+        self.dominant_age.setSpecialValueText("Not specified")
+        self.dominant_age.setValue(0.0)
+        self.dominant_age.setMinimumWidth(135)
+        self.dominant_age.setToolTip(
+            "Approximate age of the single F-P synchrone that most closely follows\n"
+            "the main visible dust structure. This is a user-interpreted morphology\n"
+            "estimate, not an automatic or formal best-fit result.")
+        row2.addWidget(self.dominant_age)
         gm.addLayout(row2)
+
+        # Resolution is a technical sampling parameter, not a morphology input.
+        # Keep it internal at a robust routine default.
+        self.n_pts = QSpinBox()
+        self.n_pts.setRange(20, 300)
+        self.n_pts.setValue(100)
+        self.n_pts.setVisible(False)
+
+        self.age_str.textChanged.connect(self._sync_max_age_from_synchrone_text)
+        self._sync_max_age_from_synchrone_text()
 
         # ── PA Rotation Offset ────────────────────────────────────────────
         gm.addWidget(self._lbl("GRID ROTATION  (match observed tail)"))
@@ -1885,6 +2469,15 @@ class ControlPanel(QScrollArea):
 
         vbox.addWidget(grp_model)
 
+        # Ejection velocity (v3.1) is now set EXCLUSIVELY from the Monte
+        # Carlo window (View > Monte Carlo morphology…) — see ControlPanel.
+        # get_ejection_params()/set_ejection_params() below. There used to
+        # be a second, separate set of v_R0/v_T0/v_N0/γ/m fields here, but
+        # that meant keying the same kind of parameter into two different
+        # windows (and the two used different ejection models — fixed R/T/N
+        # direction here vs. isotropic-random in the MC window — which
+        # invited them to silently disagree). One input location now.
+
         # ── Display options ───────────────────────────────────────────────
         grp_disp = QGroupBox("DISPLAY")
         gd = QVBoxLayout(grp_disp); gd.setSpacing(4)
@@ -1892,19 +2485,35 @@ class ControlPanel(QScrollArea):
         self.chk_sync  = QCheckBox("Synchrones (age = const)")
         self.chk_orbit = QCheckBox("Orbital path")
         self.chk_isophote = QCheckBox("Isophotes (from image)")
+        self.chk_sun   = QCheckBox("Sun direction ☀")
+        self.chk_antivel = QCheckBox("Anti-velocity (−v)")
+        self.chk_crosshair = QCheckBox("Nucleus crosshair (+)")
         self.chk_synd.setChecked(True)
         self.chk_sync.setChecked(True)
         self.chk_orbit.setChecked(True)
         self.chk_isophote.setChecked(False)
+        self.chk_sun.setChecked(True)
+        self.chk_antivel.setChecked(True)
+        self.chk_crosshair.setChecked(True)
         self.chk_synd.setStyleSheet("color:#ff7070;")
         self.chk_sync.setStyleSheet("color:#ffd060;")
         self.chk_orbit.setStyleSheet("color:#4a8adf;")
         self.chk_isophote.setStyleSheet("color:#60e0a0;")
+        self.chk_sun.setStyleSheet("color:#ffe030;")
+        self.chk_antivel.setStyleSheet("color:#ff5078;")
         self.chk_isophote.setToolTip(
             "Trace surface-brightness contours directly from the loaded\n"
             "image (overlay mode only) for direct comparison between the\n"
             "observed tail morphology and the model curves. (v3.0)")
-        for w in [self.chk_synd, self.chk_sync, self.chk_orbit, self.chk_isophote]:
+        self.chk_sun.setToolTip("Show/hide the yellow Sun-direction arrow and ☀ label.")
+        self.chk_antivel.setToolTip("Show/hide the red –v (anti-velocity) arrow and label.")
+        self.chk_crosshair.setToolTip("Show/hide the white + crosshair marking the nucleus position.")
+        # MC morphology contour no longer has its own checkbox — it is
+        # drawn automatically on the main canvas as soon as a Monte Carlo
+        # run is sent over (see ControlPanel._mc_contour_visible below),
+        # the same way Run already updates the canvas with no extra step.
+        for w in [self.chk_synd, self.chk_sync, self.chk_orbit, self.chk_isophote,
+                  self.chk_sun, self.chk_antivel, self.chk_crosshair]:
             gd.addWidget(w)
 
         gd.addWidget(QLabel("Syndynes/Synchrones:"))
@@ -1920,7 +2529,7 @@ class ControlPanel(QScrollArea):
         row_op = QHBoxLayout()
         row_op.addWidget(QLabel("  Opacity"))
         self.op_slider = QSlider(Qt.Orientation.Horizontal)
-        self.op_slider.setRange(10, 100); self.op_slider.setValue(85)
+        self.op_slider.setRange(10, 100); self.op_slider.setValue(50)
         self.op_label  = QLabel("0.85")
         self.op_slider.valueChanged.connect(lambda v: self.op_label.setText(f"{v/100:.2f}"))
         row_op.addWidget(self.op_slider); row_op.addWidget(self.op_label)
@@ -1935,8 +2544,8 @@ class ControlPanel(QScrollArea):
         row_orbit_lw = QHBoxLayout()
         row_orbit_lw.addWidget(QLabel("  Width"))
         self.orbit_lw_slider = QSlider(Qt.Orientation.Horizontal)
-        self.orbit_lw_slider.setRange(5, 50); self.orbit_lw_slider.setValue(10)
-        self.orbit_lw_label  = QLabel("1.0")
+        self.orbit_lw_slider.setRange(5, 50); self.orbit_lw_slider.setValue(15)
+        self.orbit_lw_label  = QLabel("1.5")
         self.orbit_lw_slider.valueChanged.connect(
             lambda v: self.orbit_lw_label.setText(f"{v/10:.1f}"))
         row_orbit_lw.addWidget(self.orbit_lw_slider); row_orbit_lw.addWidget(self.orbit_lw_label)
@@ -1945,8 +2554,8 @@ class ControlPanel(QScrollArea):
         row_orbit_op = QHBoxLayout()
         row_orbit_op.addWidget(QLabel("  Opacity"))
         self.orbit_op_slider = QSlider(Qt.Orientation.Horizontal)
-        self.orbit_op_slider.setRange(10, 100); self.orbit_op_slider.setValue(70)
-        self.orbit_op_label  = QLabel("0.70")
+        self.orbit_op_slider.setRange(10, 100); self.orbit_op_slider.setValue(100)
+        self.orbit_op_label  = QLabel("1.00")
         self.orbit_op_slider.valueChanged.connect(
             lambda v: self.orbit_op_label.setText(f"{v/100:.2f}"))
         row_orbit_op.addWidget(self.orbit_op_slider); row_orbit_op.addWidget(self.orbit_op_label)
@@ -1956,8 +2565,8 @@ class ControlPanel(QScrollArea):
         row_isolvl = QHBoxLayout()
         row_isolvl.addWidget(QLabel("Isophote levels"))
         self.isolvl_slider = QSlider(Qt.Orientation.Horizontal)
-        self.isolvl_slider.setRange(3, 15); self.isolvl_slider.setValue(3)
-        self.isolvl_label  = QLabel("3")
+        self.isolvl_slider.setRange(3, 15); self.isolvl_slider.setValue(6)
+        self.isolvl_label  = QLabel("6")
         self.isolvl_slider.valueChanged.connect(
             lambda v: self.isolvl_label.setText(str(v)))
         row_isolvl.addWidget(self.isolvl_slider); row_isolvl.addWidget(self.isolvl_label)
@@ -1966,8 +2575,8 @@ class ControlPanel(QScrollArea):
         row_isosm = QHBoxLayout()
         row_isosm.addWidget(QLabel("Isophote smoothing (px)"))
         self.isosm_slider = QSlider(Qt.Orientation.Horizontal)
-        self.isosm_slider.setRange(0, 60); self.isosm_slider.setValue(60)
-        self.isosm_label  = QLabel("6.0")
+        self.isosm_slider.setRange(0, 60); self.isosm_slider.setValue(20)
+        self.isosm_label  = QLabel("2.0")
         self.isosm_slider.valueChanged.connect(
             lambda v: self.isosm_label.setText(f"{v/10:.1f}"))
         row_isosm.addWidget(self.isosm_slider); row_isosm.addWidget(self.isosm_label)
@@ -1979,6 +2588,15 @@ class ControlPanel(QScrollArea):
         isosm_hint.setStyleSheet("color:#2a5060; font-size:9px;")
         isosm_hint.setWordWrap(True)
         gd.addWidget(isosm_hint)
+
+        # v3.1 — MC contour width/opacity/info-box controls used to live
+        # here, but with the visibility checkbox gone (contour now shows
+        # automatically) these were the last MC-specific bits left in the
+        # main DISPLAY panel — moved out to keep that panel free of
+        # anything you only ever touch from inside the Monte Carlo
+        # window. Width/opacity/info-box are now set on the MC window's
+        # own "3. Display" tab instead (see MCWindow), next to the other
+        # re-thresholding controls that already lived there.
 
         vbox.addWidget(grp_disp)
 
@@ -2015,6 +2633,18 @@ class ControlPanel(QScrollArea):
         self.btn_pick_nuc  = QPushButton("⊕  CLICK NUCLEUS ON PLOT")
         self.btn_rot_nup   = QPushButton("↻  ROTATE N-UP / E-LEFT")
         self.rot_status    = QLabel("")
+        # View persistence (v3.0.4) — replaces the discrete 1x-4x preset
+        # buttons from v3.0/v3.0.1, and the callback-based capture from
+        # v3.0.2/v3.0.3 (which turned out unreliable — see CHANGELOG). Use
+        # the plot toolbar's own zoom (rubber-band) and pan (hand) tools
+        # directly to frame the overlay however you want — draw_model()
+        # reads whatever x/y range that leaves the axes at directly off
+        # the axes itself each time it redraws, so it persists across
+        # Compute Model re-runs automatically, with no separate "lock"
+        # state to go stale. This button is the only explicit control
+        # needed: it snaps the view back to showing the full image.
+        self.btn_reset_view = QPushButton("⟲  RESET TO FULL IMAGE")
+        self.btn_reset_view.clicked.connect(self._reset_overlay_view)
         self.btn_auto_stretch = QPushButton("✨  AUTO STRETCH")
         self.btn_auto_stretch.setToolTip("Automatically compute a reasonable starting Contrast/Intensity from the image histogram")
         self.btn_auto_stretch.clicked.connect(self._auto_stretch)
@@ -2030,7 +2660,7 @@ class ControlPanel(QScrollArea):
         # Give all stub widgets the hidden container as parent
         for w in [self.nuc_x_spin, self.nuc_y_spin, self.au_px_spin,
                   self.npa_spin, self.npa_hint, self.sl_contrast, self.sl_intensity,
-                  self.btn_pick_nuc,
+                  self.btn_pick_nuc, self.btn_reset_view,
                   self.btn_rot_nup, self.rot_status]:
             _stub_lay.addWidget(w)
 
@@ -2044,6 +2674,25 @@ class ControlPanel(QScrollArea):
         self.btn_img = self.btn_img_open   # alias
 
         vbox.addWidget(grp_img)
+
+        # ── Monte Carlo overlay control ───────────────────────────────────
+        # The MC window may be closed while its contour remains on the main
+        # canvas, so provide a persistent, obvious way to remove that result.
+        grp_mc_overlay = QGroupBox("🧹  MODEL RESULTS")
+        gmc = QVBoxLayout(grp_mc_overlay)
+        gmc.setContentsMargins(8, 7, 8, 8)
+        self.btn_clear_mc = QPushButton("✕  CLEAR ALL MODELS")
+        self.btn_clear_mc.setProperty("class", "danger")
+        self.btn_clear_mc.setToolTip(
+            "Clear all computed model results from the main canvas: "
+            "Finson–Probstein curves/vectors and Monte Carlo contours. "
+            "The loaded image, image isophotes, and editable input values "
+            "are preserved.")
+        self.btn_clear_mc.setEnabled(False)
+        self.btn_clear_mc.clicked.connect(
+            lambda: getattr(self.window(), "_clear_all_models")())
+        gmc.addWidget(self.btn_clear_mc)
+        vbox.addWidget(grp_mc_overlay)
 
         # ── Observed Ephemeris Override (also in dialog) ──────────────────
         self.chk_use_obs = QCheckBox("★ Ephemeris override active")
@@ -2161,6 +2810,24 @@ class ControlPanel(QScrollArea):
         try:
             return [int(x) for x in s.split(",") if x.strip()]
         except: return []
+
+    def _sync_max_age_from_synchrone_text(self, *_):
+        """Set Maximum dust age = max(valid Synchrone ages)."""
+        ages = self._parse_floats(self.age_str.text())
+        if not ages:
+            if hasattr(self, 'lbl_max_age_auto'):
+                self.lbl_max_age_auto.setText("—  no valid synchrone age")
+                self.lbl_max_age_auto.setStyleSheet(
+                    "color:#ffb020; font-weight:600;")
+            return
+        max_age = max(1, int(round(max(ages))))
+        self.max_age.setValue(max_age)
+        if hasattr(self, 'dominant_age'):
+            self.dominant_age.setMaximum(float(max_age))
+        if hasattr(self, 'lbl_max_age_auto'):
+            self.lbl_max_age_auto.setText(f"{max_age:g} d  — automatic")
+            self.lbl_max_age_auto.setStyleSheet(
+                "color:#90d8ff; font-weight:600;")
 
 
     # ── Preset comet ──────────────────────────────────────────────────────
@@ -2285,20 +2952,70 @@ class ControlPanel(QScrollArea):
             # Preliminary AU/px estimate (1 AU ~ 8.3 lmin; use 1 AU default)
             self.au_px_spin.setValue(round(ps_deg * (3.14159/180) * 1.0, 8))
 
-            # Pre-fill observation date from FITS header
-            date_obs = hdr.get("DATE-OBS","")
-            if date_obs and hasattr(self, "obs_date"):
-                d = date_obs[:10]
-                self.obs_date.setText(d)
+            # Pre-fill observation date+time from FITS header. date_to_jd()
+            # already accepts the full ISO-8601 'YYYY-MM-DDTHH:MM:SS[.fff]'
+            # format DATE-OBS normally uses, so the WHOLE string is passed
+            # through (previously this truncated to date_obs[:10], silently
+            # discarding the time-of-day entirely). Some older FITS files
+            # split the time into a separate TIME-OBS keyword instead of
+            # embedding it in DATE-OBS — combine them in that case.
+            date_obs = hdr.get("DATE-OBS", "") or hdr.get("DATE_OBS", "") or hdr.get("DATE-AVG", "")
+            if date_obs and len(date_obs) <= 10 and hdr.get("TIME-OBS"):
+                date_obs = f"{date_obs}T{hdr['TIME-OBS']}"
+            if date_obs:
+                # BUG FIX (v3.1): there are THREE separate date fields, one
+                # per comet_tabs tab (PRESET=obs_date, MANUAL=m_obs,
+                # FETCH JPL=fetch_date) — only obs_date was being updated
+                # here, so loading a FITS image while on the FETCH JPL tab
+                # (the common case — JPL-fetched elements + your own image)
+                # left ITS date field looking untouched even though the
+                # actual computation (see below) was already fixed. Update
+                # all three that exist, regardless of which tab is active,
+                # so switching tabs afterward still shows the right date
+                # everywhere rather than just in whichever was visible at
+                # load time.
+                for attr in ("obs_date", "fetch_date", "m_obs"):
+                    w = getattr(self, attr, None)
+                    if w is not None:
+                        w.setText(date_obs)
+                # _emit_compute() reads obs_jd as `self._comet_el.get(
+                # "obs_jd", <fallback from whichever tab's date field>)`,
+                # and on_fetch_done() (run once, when the comet was
+                # fetched) permanently bakes a fixed "obs_jd" key into
+                # self._comet_el at that time. That baked-in key takes
+                # priority over ANY of the text fields above
+                # UNCONDITIONALLY — so updating the field text alone was
+                # never enough; also overwrite comet_el's obs_jd here, so
+                # a freshly loaded image's own date wins, the way you'd
+                # expect, no matter which tab is currently selected.
+                try:
+                    new_obs_jd = cta.date_to_jd(date_obs)
+                    if self._comet_el is not None:
+                        self._comet_el["obs_jd"] = new_obs_jd
+                except Exception:
+                    pass   # malformed DATE-OBS string — leave obs_jd alone
 
-            # Pre-fill object name if recognised
+            # Pre-fill object name if recognised. blockSignals is
+            # important here (v3.1 bug fix) — without it, setCurrentIndex()
+            # fires currentIndexChanged -> _on_comet_selected(), which does
+            # self.obs_date.setText(meta.get("obs","")) and overwrote the
+            # FITS file's own DATE-OBS we *just* set above with the DB's
+            # static reference date instead — this was the actual, more
+            # common trigger for the "date doesn't get pulled in" symptom
+            # (it WAS pulled in, then silently clobbered a few lines later
+            # by this auto-match, which is only meant to visually highlight
+            # a matching preset, not to reset other fields as a side effect).
             obj = hdr.get("OBJECT","")
             if obj:
                 # Try to match against DB
-                for i, name in enumerate(list(cta.COMET_DB.keys())):
-                    if any(tok in name for tok in obj.split()):
-                        self.combo_comet.setCurrentIndex(i)
-                        break
+                self.combo_comet.blockSignals(True)
+                try:
+                    for i, name in enumerate(list(cta.COMET_DB.keys())):
+                        if any(tok in name for tok in obj.split()):
+                            self.combo_comet.setCurrentIndex(i)
+                            break
+                finally:
+                    self.combo_comet.blockSignals(False)
 
             wcs_info = (f"WCS OK · {ps_deg*3600:.3f}\"/px · "
                         f"NPA={npa:.1f}° · nuc=({nx:.0f},{ny:.0f})")
@@ -2311,6 +3028,18 @@ class ControlPanel(QScrollArea):
 
         self.overlay_params.setVisible(True)
         self.btn_clear_img.setVisible(True)
+
+        # Default behaviour for real image workflows: as soon as an
+        # image is loaded, show its image-derived isophote contours.
+        # Users can still turn this off from DISPLAY.
+        try:
+            self.chk_isophote.setChecked(True)
+            self.isolvl_slider.setValue(6)
+            self.isosm_slider.setValue(20)   # 2.0 px
+        except Exception:
+            pass
+
+        self._reset_overlay_view()
         self.image_loaded.emit(self._img_arr)
         # Sync dialog
         if hasattr(self, '_img_dialog') and self._img_dialog:
@@ -2342,6 +3071,21 @@ class ControlPanel(QScrollArea):
         except Exception as ex:
             QMessageBox.critical(self, "FITS Load Error", f"Could not read FITS:\n{ex}")
             return None, None
+
+    def _view_fits_header(self):
+        """Open a read-only viewer showing the raw FITS header cards of
+        the currently loaded file (v3.0.6). No-op with an explanatory
+        message for non-FITS images (JPEG/PNG), which have no header."""
+        if self._fits_header is None:
+            QMessageBox.information(self, "No FITS Header",
+                "The currently loaded image isn't a FITS file (or has no "
+                "header) — JPEG/PNG images don't carry a FITS header.")
+            return
+        name = ""
+        if hasattr(self, "_last_image_path") and self._last_image_path:
+            name = os.path.basename(self._last_image_path)
+        dlg = FitsHeaderDialog(self, self._fits_header, name)
+        dlg.exec()
 
     def _stretch_raw(self, data: np.ndarray) -> np.ndarray:
         """
@@ -2492,6 +3236,28 @@ class ControlPanel(QScrollArea):
 
         except Exception as ex:
             self.rot_status.setText(f"✗ Rotation failed: {ex}")
+        # Rotation changes the image's pixel dimensions — any previous
+        # view lock was in the OLD image's pixel coordinates and is now
+        # meaningless, so reset to the full (newly rotated) image.
+        self._reset_overlay_view()
+
+    def _reset_overlay_view(self):
+        """Snap the overlay back to showing the full image — call
+        whenever the loaded image itself changes (new file, cleared, or
+        rotated), since whatever pan/zoom was set before no longer
+        corresponds to the new image's dimensions, and also wired
+        directly to the RESET TO FULL IMAGE button. Nothing to "clear" as
+        separate state — draw_model() reads the view directly off the
+        axes each time, so setting it here is itself enough; the next
+        Compute Model run will read this back as "the previous view"."""
+        mw = self.window()
+        canvas = getattr(mw, "canvas", None) if mw else None
+        if canvas is None or self._img_arr is None:
+            return
+        h_img, w_img = self._img_arr.shape[:2]
+        canvas.ax.set_xlim(0, w_img)
+        canvas.ax.set_ylim(h_img, 0)
+        canvas.canvas.draw_idle()
 
     def _clear_image(self):
         self._img_arr     = None
@@ -2505,6 +3271,10 @@ class ControlPanel(QScrollArea):
         except Exception: pass
         try: self.btn_clear_img.setVisible(False)
         except Exception: pass
+        # Reset image-derived display state.
+        try: self.chk_isophote.setChecked(False)
+        except Exception: pass
+
         # Reset ephemeris override checkbox
         try: self.chk_use_obs.setChecked(False)
         except Exception: pass
@@ -2522,22 +3292,55 @@ class ControlPanel(QScrollArea):
             return
         betas = self._parse_floats(self.beta_str.text())
         ages  = self._parse_ints(self.age_str.text())
+        self._sync_max_age_from_synchrone_text()
         if not betas or not ages:
             QMessageBox.warning(self, "Bad Input",
                                 "Enter at least one valid β value and synchrone age.")
             return
-        obs_jd = self._comet_el.get("obs_jd",
-                    cta.date_to_jd(self.obs_date.text()) if self.comet_tabs.currentIndex()==0
-                    else cta.today_jd())
+        # obs_jd: prefer whatever's already baked into _comet_el (set by
+        # on_fetch_done()/_use_preset()/_use_manual(), and now also kept
+        # current by _load_image()'s DATE-OBS fix — see that method).
+        # Fallback below only matters if that key is somehow absent; it
+        # now checks EACH tab's own date field (previously only tab 0's,
+        # so tabs 1/2 always silently fell back to today() even when
+        # their own field had a perfectly good date in it — v3.1 fix).
+        obs_jd = self._comet_el.get("obs_jd")
+        if obs_jd is None:
+            idx = self.comet_tabs.currentIndex()
+            date_text = (self.obs_date.text()   if idx == 0 else
+                        self.m_obs.text()       if idx == 1 else
+                        self.fetch_date.text()  if idx == 2 else "")
+            try:
+                obs_jd = cta.date_to_jd(date_text) if date_text else cta.today_jd()
+            except Exception:
+                obs_jd = cta.today_jd()
         self.compute_requested.emit(
             self._comet_el, obs_jd, betas, ages,
-            self.max_age.value(), self.n_pts.value())
+            self.max_age.value(), self.n_pts.value(),
+            self.get_ejection_params())
 
     def get_rotation_offset(self) -> float:
         """Return grid rotation offset in degrees (positive = CW = more toward West)."""
         return self.rot_slider.value() / 10.0
 
+    def get_ejection_params(self) -> dict:
+        """Return the v3.1 ejection-velocity dict for compute_model()/
+        dust_position(). Set EXCLUSIVELY via set_ejection_params() below,
+        called from the Monte Carlo window's "Run Monte Carlo" — there is
+        no longer a separate input for this in the main panel (see the
+        comment above grp_model). All-zero (the initial default)
+        reproduces the v3.0 zero-ejection-velocity model exactly."""
+        return dict(self._current_ejection)
+
+    def set_ejection_params(self, d: dict):
+        """Called from MCWindow when its Run Monte Carlo button is
+        clicked, so the main F-P model picks up the SAME ejection
+        velocity the Monte Carlo population is using, without it being
+        keyed in twice in two different places."""
+        self._current_ejection = dict(d)
+
     def get_vis(self):
+        mc = dict(self._mc_style)
         return dict(
             synd=self.chk_synd.isChecked(),
             sync=self.chk_sync.isChecked(),
@@ -2549,6 +3352,27 @@ class ControlPanel(QScrollArea):
             alpha=self.op_slider.value()/100,
             orbit_lw=self.orbit_lw_slider.value()/10,
             orbit_alpha=self.orbit_op_slider.value()/100,
+            mc_contour=self._mc_contour_visible,
+            mc_lw=mc.get("lw", 1.2),
+            mc_alpha=mc.get("alpha", 0.95),
+            mc_info_box=mc.get("info_box", True),
+            mc_view_style=mc.get("view_style", "analysis"),
+            mc_background=mc.get("background", "image"),
+            mc_coordinates=mc.get("coordinates", "pixels"),
+            observed_show=mc.get("observed_show", True),
+            observed_color=mc.get("observed_color", ISOPHOTE_COLOR),
+            observed_lw=mc.get("observed_lw", 0.6),
+            observed_alpha=mc.get("observed_alpha", 0.75),
+            observed_ls=mc.get("observed_ls", "-"),
+            model_color=mc.get("model_color", "#ff3399"),
+            model_ls=mc.get("model_ls", "--"),
+            show_legend=mc.get("show_legend", True),
+            show_title=mc.get("show_title", True),
+            show_compass=mc.get("show_compass", True),
+            grayscale_safe=mc.get("grayscale_safe", False),
+            show_sun=self.chk_sun.isChecked(),
+            show_antivel=self.chk_antivel.isChecked(),
+            show_crosshair=self.chk_crosshair.isChecked(),
         )
 
     def get_overlay(self):
@@ -2571,8 +3395,8 @@ class ControlPanel(QScrollArea):
 class InfoPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(280)
-        self.setMaximumWidth(320)
+        self.setMinimumWidth(240)
+        self.setMaximumWidth(300)
 
         vbox = QVBoxLayout(self)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -2583,11 +3407,14 @@ class InfoPanel(QWidget):
         self.hdr.setStyleSheet(
             f"background:{T['panel_bg']}; color:{T['text_muted']}; font-size:10px;"
             f"letter-spacing:2px; font-weight:bold; padding:6px 8px;"
+            f"border-left:1px solid {T['border']};"
             f"border-bottom:1px solid {T['border']};")
         vbox.addWidget(self.hdr)
 
         self.tabs = QTabWidget()
-        self.tabs.setTabBarAutoHide(True)   # only INFO is left after v3.0's tab removals
+        self.tabs.setTabBarAutoHide(True)
+        self.tabs.setStyleSheet(
+            f"QTabWidget::pane {{ border-left:1px solid {T['border']}; }}")
         vbox.addWidget(self.tabs)
 
         # ── Tab 1 : INFO (Ephemeris + Orbital Elements) ──────────────────
@@ -2666,9 +3493,11 @@ class InfoPanel(QWidget):
         self.anim_size = QDoubleSpinBox()
         self.anim_size.setRange(0.01, 100000.0)
         self.anim_size.setDecimals(3)
-        self.anim_size.setValue(600.0)   # matches Compute Model's default FOV
+        self.anim_size.setValue(600.0)
         self.anim_size.setSuffix(" arcmin")
+        self.anim_size.setMaximumWidth(130)
         self.anim_btn_auto = QPushButton("Auto")
+        self.anim_btn_auto.setMaximumWidth(52)
         self.anim_btn_auto.setToolTip(
             "Samples the date range and suggests a size that fits the "
             "widest tail with ~20% margin.")
@@ -2772,6 +3601,52 @@ class InfoPanel(QWidget):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  FITS HEADER VIEWER  (v3.0.6) — read-only display of every raw header
+#  card in the currently loaded FITS file, opened from the Image Setup
+#  dialog's "VIEW FITS HEADER" button.
+# ─────────────────────────────────────────────────────────────────────────────
+class FitsHeaderDialog(QDialog):
+    def __init__(self, parent, header, filename: str = ""):
+        super().__init__(parent)
+        title = f"FITS Header — {filename}" if filename else "FITS Header"
+        self.setWindowTitle(title)
+        self.setMinimumSize(560, 600)
+        v = QVBoxLayout(self)
+
+        info = QLabel(f"{len(header)} card(s)" +
+                      (f"  ·  {filename}" if filename else ""))
+        info.setStyleSheet("color:#3a6070; font-size:10px;")
+        v.addWidget(info)
+
+        text = QTextEdit()
+        text.setReadOnly(True)
+        text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        text.setStyleSheet(
+            "font-family:monospace; font-size:11px;"
+            "background:#0a0f1a; color:#c0d0e0; border:1px solid #1a2540;")
+        # tostring() renders the standard 80-column FITS card format, one
+        # card per line — the exact raw keyword/value/comment content,
+        # not a re-summarized version of it.
+        try:
+            body = header.tostring(sep='\n', padding=False)
+        except Exception:
+            body = "\n".join(str(card) for card in header.cards)
+        text.setPlainText(body)
+        v.addWidget(text)
+
+        btns = QHBoxLayout()
+        btn_copy = QPushButton("📋  COPY")
+        btn_copy.clicked.connect(
+            lambda: QApplication.clipboard().setText(text.toPlainText()))
+        btns.addWidget(btn_copy)
+        btns.addStretch()
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.accept)
+        btns.addWidget(btn_close)
+        v.addLayout(btns)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  IMAGE SETUP DIALOG — floating window for all image calibration
 # ─────────────────────────────────────────────────────────────────────────────
 class ImageSetupDialog(QDialog):
@@ -2787,15 +3662,13 @@ class ImageSetupDialog(QDialog):
     def __init__(self, ctrl: "ControlPanel"):
         super().__init__(ctrl.window() if ctrl.window() else ctrl,
                          Qt.WindowType.Dialog |
-                         Qt.WindowType.WindowStaysOnTopHint |
                          Qt.WindowType.WindowCloseButtonHint |
                          Qt.WindowType.WindowTitleHint)
-        # NOTE: was Qt.WindowType.Tool, which on several window
-        # managers renders without a properly draggable title bar — the
-        # dialog could be opened but never moved. Qt.WindowType.Dialog
-        # gives a full, natively draggable title bar on every platform
-        # while WindowStaysOnTopHint keeps the original "floats above
-        # the main window" behavior intact.
+        # Keep this as a modeless child dialog of MainWindow.  A parented
+        # QDialog remains above its CTA main window, but without
+        # WindowStaysOnTopHint it no longer stays above unrelated
+        # applications or every other desktop window.
+        # Qt.WindowType.Dialog also provides a normal draggable title bar.
         self.ctrl = ctrl
         self._sync_in_progress = False  # Flag to prevent infinite loops in ps_spin ↔ au_px_spin sync
         self.setWindowTitle("Image Setup & Calibration")
@@ -2843,6 +3716,12 @@ class ImageSetupDialog(QDialog):
         self.btn_clear.clicked.connect(self._on_clear)
         fb.addWidget(self.btn_open, 3); fb.addWidget(self.btn_clear, 1)
         vb.addLayout(fb)
+        self.btn_view_header = QPushButton("📄  VIEW FITS HEADER")
+        self.btn_view_header.setToolTip(
+            "Shows every raw header card of the loaded FITS file. "
+            "No-op for JPEG/PNG (no FITS header to show).")
+        self.btn_view_header.clicked.connect(self.ctrl._view_fits_header)
+        vb.addWidget(self.btn_view_header)
         self.file_lbl = QLabel("No image loaded")
         self.file_lbl.setStyleSheet("color:#5a90b0;font-size:10px;")
         self.file_lbl.setWordWrap(True)
@@ -2949,7 +3828,19 @@ class ImageSetupDialog(QDialog):
         nrow.addWidget(QLabel("Y (px)")); nrow.addWidget(ctrl.nuc_y_spin, 1)
         vb.addLayout(nrow)
         vb.addWidget(ctrl.btn_pick_nuc)
-        
+
+        vb.addWidget(ctrl.btn_reset_view)
+        zoom_hint = QLabel(
+            "Use the plot toolbar's own zoom (rubber-band) and pan (hand) "
+            "tools directly on the image above to frame it however you "
+            "want. Whatever view that leaves you at is locked automatically "
+            "and used for the overlay every time Compute Model re-runs, "
+            "instead of resetting to the full image. Click RESET TO FULL "
+            "IMAGE to clear the lock.")
+        zoom_hint.setStyleSheet("color:#3a6070;font-size:10px;")
+        zoom_hint.setWordWrap(True)
+        vb.addWidget(zoom_hint)
+
         vb.addStretch()
 
         # ── Close button ──────────────────────────────────────────────────
@@ -3336,6 +4227,31 @@ class OrbitWindow(QDialog):
         vbox.addWidget(toolbar)
         vbox.addWidget(self._canvas)
 
+        # Zoom to inner solar system (v3.0.7) — for comets well beyond
+        # ~1 AU, the default view auto-fits to the WHOLE orbit, which
+        # collapses Earth's 1 AU orbit (and the Earth/Sun separation) down
+        # to a barely-distinguishable point near the center. This swaps
+        # to a fixed Sun-centered view instead — the comet itself may end
+        # up off-screen if it's currently farther out than the AU value
+        # below, which is the explicit trade-off being made.
+        zoom_row = QHBoxLayout()
+        self.chk_zoom_inner = QCheckBox("🔍  Zoom to inner solar system")
+        self.chk_zoom_inner.toggled.connect(lambda _: self._redraw())
+        self.sp_zoom_au = QDoubleSpinBox()
+        self.sp_zoom_au.setRange(0.1, 50.0)
+        self.sp_zoom_au.setDecimals(2)
+        self.sp_zoom_au.setValue(2.0)
+        self.sp_zoom_au.setSuffix("  AU")
+        self.sp_zoom_au.setToolTip(
+            "Half-width of the fixed Sun-centered view. 2 AU comfortably "
+            "shows Earth's full 1 AU orbit with some margin.")
+        self.sp_zoom_au.valueChanged.connect(
+            lambda _: self.chk_zoom_inner.isChecked() and self._redraw())
+        zoom_row.addWidget(self.chk_zoom_inner)
+        zoom_row.addWidget(self.sp_zoom_au)
+        zoom_row.addStretch()
+        vbox.addLayout(zoom_row)
+
         bot = QHBoxLayout()
         note_lbl = QLabel("3D heliocentric view  ·  click-drag to rotate  ·  "
                           "physical orbit position, not the sky-projected tail")
@@ -3345,9 +4261,10 @@ class OrbitWindow(QDialog):
         bot.addWidget(note_lbl); bot.addStretch(); bot.addWidget(btn_close)
         vbox.addLayout(bot)
 
+        self._diagram = None
         try:
-            diagram = cta.compute_orbit_diagram(comet_el, obs_jd)
-            cta.draw_orbit_diagram(self._ax, diagram, dark=(CURRENT_THEME == "dark"))
+            self._diagram = cta.compute_orbit_diagram(comet_el, obs_jd)
+            cta.draw_orbit_diagram(self._ax, self._diagram, dark=(CURRENT_THEME == "dark"))
             self._fig.tight_layout(pad=1.2)
         except Exception as e:
             self._ax.text2D(0.5, 0.5, f"Diagram error:\n{e}",
@@ -3355,6 +4272,3446 @@ class OrbitWindow(QDialog):
                             transform=self._ax.transAxes,
                             color='#ff4444', fontsize=10)
         self._canvas.draw()
+
+    def _redraw(self):
+        """Re-render with the current Zoom-to-inner-solar-system setting.
+        Reuses the already-computed self._diagram — only the VIEW changes,
+        not the underlying orbit data, so there's no need to recompute it."""
+        if self._diagram is None:
+            return
+        zoom_au = self.sp_zoom_au.value() if self.chk_zoom_inner.isChecked() else None
+        self._ax.clear()
+        try:
+            cta.draw_orbit_diagram(self._ax, self._diagram,
+                                   dark=(CURRENT_THEME == "dark"),
+                                   zoom_inner_au=zoom_au)
+            self._fig.tight_layout(pad=1.2)
+        except Exception as e:
+            self._ax.text2D(0.5, 0.5, f"Diagram error:\n{e}",
+                            ha='center', va='center',
+                            transform=self._ax.transAxes,
+                            color='#ff4444', fontsize=10)
+        self._canvas.draw()
+
+
+class MCWindow(QDialog):
+    """
+    Monte Carlo dust morphology control window (v3.1) — population-level
+    extension of the F-P syndyne/synchrone model. Where the main canvas
+    traces one curve per (β, age) choice, this samples a whole grain
+    population (size distribution + release-time window) and bins the
+    result into a density map, then contours it straight onto the MAIN
+    canvas (Phase 2) — through that canvas's own already-correct to_px()
+    pipeline, not a separate one here. See cta.compute_morphology_mc()'s
+    docstring for the full model and the Phase 1 simplification list
+    (uniform Q(t), isotropic ejection direction, fixed size-distribution
+    slope, no PSF/isophote-vs-real-image fitting yet).
+
+    v3.1 design change: this window has NO plot of its own anymore (the
+    contour on the main canvas IS the result — keeping a second, separate
+    plot here was redundant once Phase 2 existed, and Run now sends
+    automatically rather than needing a separate Send step). It is also
+    now the ONLY place ejection velocity is entered — see ControlPanel.
+    get_ejection_params()/set_ejection_params(): clicking Run here pushes
+    v0→v_N0 (others 0), γ, m into the main panel's ejection state AND
+    triggers a main-model recompute, so the F-P curves and the Monte
+    Carlo population always agree on what ejection velocity is in effect
+    instead of risking two different answers kept in two different
+    windows. v0→v_N0 specifically (not v_R0 or v_T0) because the normal-
+    to-orbit-plane direction has been this project's actual diagnostic
+    interest throughout (out-of-plane broadening of a tail feature) —
+    if you need a different single-direction mapping, edit _on_done()
+    below; the comment there says exactly where.
+
+    beta_range here is deliberately NOT the same input as the main
+    panel's β list — prefilled from min/max of that list as a
+    convenience starting point, but it's a continuous population range,
+    not a handful of discrete diagnostic test points (see the v3.1
+    changelog for why these aren't interchangeable).
+    """
+
+    # v3.1 — class attribute (not instance): survives this window being
+    # closed and a brand-new MCWindow being constructed next time it's
+    # opened (WA_DeleteOnClose means the old instance is gone). See
+    # closeEvent()/_collect_state()/_apply_state() below.
+    _saved_state: dict | None = None
+
+    def __init__(self, comet_el: dict, obs_jd: float,
+                 beta_values=None, max_age: float = 200,
+                 fp_sync_ages=None, fp_dominant_age: float = 0.0,
+                 fp_model: dict | None = None, parent=None,
+                 main_window=None):
+        super().__init__(parent)
+        self.comet_el  = comet_el
+        self.obs_jd    = obs_jd
+        self.fp_model  = fp_model
+        try:
+            self.fp_sync_ages = [float(a) for a in (fp_sync_ages or [])
+                                 if float(a) > 0]
+        except Exception:
+            self.fp_sync_ages = []
+        # Maximum dust age is authoritative from the largest listed
+        # synchrone whenever that list is available.  The legacy max_age
+        # argument is only a fallback for callers that do not supply ages.
+        self.fp_max_age = (max(self.fp_sync_ages) if self.fp_sync_ages else
+                           (float(max_age) if float(max_age) > 0 else 0.0))
+        try:
+            self.fp_dominant_age = max(0.0, float(fp_dominant_age))
+        except Exception:
+            self.fp_dominant_age = 0.0
+        if self.fp_max_age > 0 and self.fp_dominant_age > self.fp_max_age:
+            self.fp_dominant_age = self.fp_max_age
+        # v3.1, Phase 2 — plain Python reference (NOT Qt parent; this window
+        # uses parent=None, same reasoning as OrbitWindow/LCWindow) so Run
+        # can push contours + ejection params back without going through
+        # Qt's parent/child signal plumbing.
+        self.main_window = main_window
+        self._mc_result = None
+        self._smooth_au_initialized = False
+        self._cobs_obs_list = None   # v3.1 — populated by _fetch_cobs_for_qt()
+        # A small persistent cache used by the editable-input workflow.
+        # Some GUI paths can redraw/refresh tabs after load; the cache prevents
+        # a stale/cleared _cobs_obs_list from blocking Run MC after the status
+        # line already reports that COBS is ready.
+        self._cobs_ready_cache = None
+        self._pending_run_after_cobs = False
+        self._last_qt_result = None
+        self._last_qt_dips = []
+        # Q(t) inference/sampling coverage state.  COBS can contain old
+        # apparitions separated by long gaps; those data must never create a
+        # multi-year MC-window recommendation by interpolation.
+        self._qt_coverage = None
+        self._qt_recommendation_quality = ""
+        self._qt_provisional_window = None
+        # Editable input-file workflow.  A loaded .mcin file is treated as a
+        # transparent template: it restores visible GUI fields only.  Users may
+        # edit any field before running MC, then save the edited state as a new
+        # .mcin file.
+        self._loaded_input_path = None
+        self._loaded_input_profile = {}
+        self._loaded_input_comet = ""
+        self._worker     = None
+
+        self.setWindowTitle(f"🎲 Monte Carlo Morphology — {comet_el.get('name','Comet')}")
+        self.setMinimumSize(940, 720)
+        self.resize(1180, 900)
+        self.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.WindowCloseButtonHint |
+            Qt.WindowType.WindowMinMaxButtonsHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(10, 10, 10, 10)
+        vbox.setSpacing(6)
+
+        hdr = QLabel(f"{comet_el.get('name','Comet')}   |   "
+                     f"q={comet_el.get('q',0):.4f} AU   e={comet_el.get('e',0):.5f}")
+        hdr.setStyleSheet(
+            f"background:{T['panel_bg']}; color:{T['text_value']};"
+            f"font-size:13px; font-weight:700; padding:8px 12px;"
+            f"border-radius:6px; border:1px solid {T['border']};")
+        vbox.addWidget(hdr)
+
+        note = QLabel(
+            "Monte Carlo dust morphology — qualitative comparison with observed image. "
+            "β range is a continuous population range (not the F-P syndyne list). "
+            "Ejection velocity set here also updates the main F-P model.")
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color:{T['text_muted']}; font-size:9px; padding:0 4px 4px 4px;")
+        vbox.addWidget(note)
+
+        def _dspin(val, lo, hi, decimals=4, step=0.001, suffix=""):
+            w = QDoubleSpinBox()
+            w.setRange(lo, hi); w.setDecimals(decimals); w.setSingleStep(step)
+            w.setValue(val)
+            if suffix:
+                w.setSuffix(suffix)
+            return w
+
+        # v3.1 — three-tab layout, separating three genuinely different
+        # KINDS of decision so they don't all sit in one undifferentiated
+        # wall of fields:
+        #   Tab 1 "F-P Guide"  — read what the main panel's F-P syndynes
+        #     already suggest (β range, release window) and convert that
+        #     into a starting grain-size range for the simulation below.
+        #     Nothing here is itself fed into the simulation directly —
+        #     it only WRITES into Tab 2's fields when you click Apply.
+        #   Tab 2 "Simulate"   — every input that actually changes what
+        #     gets SIMULATED (grain sizes, particle count, release
+        #     window, ejection speed/direction, production-rate shape).
+        #     Changing anything here means Run must be clicked again.
+        #   Tab 3 "Display"    — re-thresholding an ALREADY-COMPUTED
+        #     result into a contour (floor/levels/smoothing). Re-extract
+        #     here is fast and needs no new simulation at all.
+        # Labels throughout favour plain wording over raw Python variable
+        # names, and follow py_COMTAILS's TAIL_INPUTS.dat naming where
+        # there's a direct equivalent (Moreno, F. 2025, A&A 695, A263;
+        # python port by R. Morales & N. Robles, IAA-CSIC; https://
+        # github.com/FernandoMorenoDanvila/py_COMTAILS, MIT licence).
+
+        self._smooth_au_initialized = False
+
+        # sp_smooth_au — hidden state carrier for smooth sigma used in
+        # extract_morphology_contours(). Always 0 (no smoothing); kept
+        # as a QDoubleSpinBox so _collect_state() / save / load work
+        # without special-casing it. _on_done() writes 0.0 here each run.
+        self.sp_smooth_au = QDoubleSpinBox()
+        self.sp_smooth_au.setRange(0.0, 1.0)
+        self.sp_smooth_au.setDecimals(7)
+        self.sp_smooth_au.setValue(0.0)
+        self.sp_smooth_au.hide()
+
+        tabs = QTabWidget()
+        self.tabs = tabs
+        self._visited_tabs = {0}
+        tabs.setDocumentMode(True)
+        tabs.setStyleSheet(
+            "QTabBar::tab { padding: 6px 18px; font-size: 11px; font-weight: bold; }"
+            "QTabBar::tab:selected { border-bottom: 3px solid #4a8adf; }")
+
+        page_guide = QWidget(); guide_v = QVBoxLayout(page_guide)
+        page_sim   = QWidget(); sim_v   = QVBoxLayout(page_sim); sim_v.setSpacing(10)
+        page_disp  = QWidget(); disp_v  = QVBoxLayout(page_disp)
+
+        # Input widths are intentionally bounded: wide enough to show the
+        # complete value + suffix, but not so wide that numeric controls
+        # dominate the form on large screens.
+        W_SMALL = 112
+        W_MED   = 145
+        W_WIDE  = 172
+
+        def _sp(w, width=W_MED):
+            w.setMinimumWidth(width)
+            w.setMaximumWidth(width + 18)
+            return w
+
+        # ════════════════════════════════════════════════════════════════
+        # GRAIN DENSITY (shared by Guide tab and Simulate tab)
+        # ════════════════════════════════════════════════════════════════
+        self.sp_rho = _dspin(0.5, 0.05, 10.0, 2, 0.05, " g/cm³")
+        _sp(self.sp_rho, W_MED)
+        self.sp_rho.setToolTip(
+            "Grain bulk density — converts between grain radius and β.\n"
+            "CTA default 0.5 g/cm³; many published models use 1.0 g/cm³.")
+
+        # ════════════════════════════════════════════════════════════════
+        # TAB 2 — SIMULATE
+        # ════════════════════════════════════════════════════════════════
+
+        # ── Grain size ───────────────────────────────────────────────────
+        grp_grain = QGroupBox("Grain size distribution")
+        gg = QGridLayout(grp_grain); gg.setHorizontalSpacing(10); gg.setVerticalSpacing(6)
+
+        beta_lo = min(beta_values) if beta_values else 0.001
+        beta_hi = max(beta_values) if beta_values else 0.1
+        r_max_default = cta._beta_to_radius_um(beta_lo)
+        r_min_default = cta._beta_to_radius_um(beta_hi)
+
+        self.sp_r_min = _sp(_dspin(r_min_default, 0.0001, 1.0e5, 4, 0.01, " µm"), W_WIDE)
+        self.sp_r_max = _sp(_dspin(r_max_default, 0.0001, 1.0e5, 2, 1.0,  " µm"), W_WIDE)
+        self.sp_gamma_size = _sp(_dspin(-3.6, -10.0, 5.0, 2, 0.1), W_SMALL)
+        self.sp_gamma_size.setToolTip(
+            "Size-distribution slope: dN/da ∝ a^κ.  More negative = more small grains.")
+
+        self.lbl_beta_equiv = QLabel()
+        self.lbl_beta_equiv.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        def _update_beta_equiv():
+            try:
+                rho = self.sp_rho.value()
+                b_max = cta._radius_um_to_beta(self.sp_r_min.value(), rho)
+                b_min = cta._radius_um_to_beta(self.sp_r_max.value(), rho)
+                self.lbl_beta_equiv.setText(
+                    f"≡ β [{b_min:.4g} – {b_max:.4g}]  (ρ={rho:.2g} g/cm³, Qpr=1)")
+            except Exception:
+                self.lbl_beta_equiv.setText("")
+        self.sp_r_min.valueChanged.connect(_update_beta_equiv)
+        self.sp_r_max.valueChanged.connect(_update_beta_equiv)
+        self.sp_rho.valueChanged.connect(_update_beta_equiv)
+        _update_beta_equiv()
+
+        gg.addWidget(QLabel("r_min (µm)"), 0, 0); gg.addWidget(self.sp_r_min, 0, 1)
+        gg.addWidget(QLabel("r_max (µm)"), 0, 2); gg.addWidget(self.sp_r_max, 0, 3)
+        gg.addWidget(self.lbl_beta_equiv, 1, 0, 1, 4)
+        gg.addWidget(QLabel("Slope κ"), 2, 0); gg.addWidget(self.sp_gamma_size, 2, 1)
+        sim_v.addWidget(grp_grain)
+
+        # ── Simulation parameters ────────────────────────────────────────
+        grp_sim = QGroupBox("Simulation")
+        sg = QGridLayout(grp_sim); sg.setHorizontalSpacing(10); sg.setVerticalSpacing(8)
+
+        self.sp_n = QSpinBox(); self.sp_n.setRange(100, 2000000)
+        self.sp_n.setValue(50000); self.sp_n.setSingleStep(50000)
+        _sp(self.sp_n, W_MED)
+        self.sp_n.setToolTip(
+            "Number of simulated particles.\n"
+            "50,000  — quick preview (~5s)\n"
+            "500,000 — good quality (~1 min)\n"
+            "1,000,000 — publication quality (~2 min)\n"
+            "2,000,000 — maximum quality (~5 min)")
+
+        # Grid resolution fixed at 400 — not user-adjustable.
+        # Grid is a computational parameter (always higher=better); users
+        # should control quality/speed via particle count instead.
+        # 400×400 = 160,000 bins; with 1M particles → ~6 particles/bin
+        # average, enough for smooth contours without smoothing.
+        self._grid_npix = 400
+
+        self.sp_max_age = _sp(_dspin(max_age, 1.0, 2000.0, 1, 10.0, " d"), W_MED)
+        self.sp_max_age.setToolTip(
+            "Dust release window: how many days before the observation\n"
+            "activity is assumed to span. Not the same as the main panel\n"
+            "Max age — estimate this independently from the image size.")
+
+        self.sp_v0    = _sp(_dspin(0.0, 0.0, 2000.0, 2, 1.0, " m/s"), W_MED)
+        self.sp_gamma = _sp(_dspin(0.5, 0.0, 5.0, 2, 0.1), W_SMALL)
+        self.sp_mexp  = _sp(_dspin(0.5, -5.0, 5.0, 2, 0.1), W_SMALL)
+        self.sp_v0.setToolTip(
+            "V₀ is the reference coefficient at β=1 and r_H=1 AU — it is NOT "
+            "the actual speed of every grain.\n"
+            "CTA evaluates each grain with V = V₀·β^γ·r_H^−κ.")
+        self.sp_gamma.setToolTip("γ: V ∝ β^γ  (size dependence)")
+        self.sp_mexp.setToolTip("κ: V ∝ r_H^−κ  (heliocentric distance dependence)")
+
+        # Live translation of the abstract V₀ coefficient into the actual
+        # terminal-speed range represented by the current grain-size limits.
+        # This prevents V₀ from being mistaken for the speed of every particle.
+        self.lbl_actual_speed = QLabel()
+        self.lbl_actual_speed.setWordWrap(True)
+        self.lbl_actual_speed.setStyleSheet(
+            f"color:{T['text_muted']}; font-size:9px; padding:2px 0 4px 0;")
+
+        def _update_actual_speed_label():
+            try:
+                v0 = float(self.sp_v0.value())
+                rho = float(self.sp_rho.value())
+                beta_fast = cta._radius_um_to_beta(self.sp_r_min.value(), rho)
+                beta_slow = cta._radius_um_to_beta(self.sp_r_max.value(), rho)
+                r_c, _ = cta.elem_to_state(self.comet_el, self.obs_jd)
+                r_h = float(cta.vmag(r_c))
+                v_fast = float(cta.real_ejection_speed_ms(
+                    v0, beta_fast, r_h,
+                    self.sp_gamma.value(), self.sp_mexp.value()))
+                v_slow = float(cta.real_ejection_speed_ms(
+                    v0, beta_slow, r_h,
+                    self.sp_gamma.value(), self.sp_mexp.value()))
+                v_lo, v_hi = sorted((v_fast, v_slow))
+                if abs(v_hi - v_lo) < 0.005:
+                    speed_text = f"{v_lo:.2f} m/s"
+                elif v_hi < 10.0:
+                    speed_text = f"{v_lo:.2f}–{v_hi:.2f} m/s"
+                else:
+                    speed_text = f"{v_lo:.1f}–{v_hi:.1f} m/s"
+                self.lbl_actual_speed.setText(
+                    f"Actual grain-speed range: {speed_text} at r_H={r_h:.3f} AU "
+                    f"for the current r_min–r_max range.  "
+                    "V₀ is a β=1, r_H=1 AU reference coefficient, not the speed "
+                    "assigned to every grain.")
+            except Exception:
+                self.lbl_actual_speed.setText(
+                    "V₀ is a reference coefficient. Actual grain speed is evaluated "
+                    "from V = V₀·β^γ·r_H^−κ.")
+
+        for _w in (self.sp_v0, self.sp_gamma, self.sp_mexp,
+                   self.sp_r_min, self.sp_r_max, self.sp_rho):
+            _w.valueChanged.connect(_update_actual_speed_label)
+        _update_actual_speed_label()
+
+        self.chk_seed = QCheckBox("Fixed seed")
+        self.sp_seed  = QSpinBox(); self.sp_seed.setRange(0, 999999)
+        self.sp_seed.setValue(42); _sp(self.sp_seed, W_SMALL); self.sp_seed.setEnabled(False)
+        self.chk_seed.toggled.connect(self.sp_seed.setEnabled)
+        self.chk_seed.setToolTip("Fix random seed for reproducible / comparable runs.")
+
+        # ── Row layout — each field gets ONE unbroken grid row, no shared
+        # row indices between unrelated fields (previous version had V0/γ
+        # silently overwriting the Release-window/grid-note row).
+        r = 0
+        sg.addWidget(QLabel("Particles"), r, 0)
+        sg.addWidget(self.sp_n, r, 1)
+        r += 1
+        # Quick-select buttons on their OWN full-width row, roomy enough
+        # to not clip labels (previous version squeezed 4 buttons into a
+        # 2-column grid cell meant for one spinbox, cutting off text).
+        n_row = QHBoxLayout(); n_row.setSpacing(6)
+        n_row.addWidget(QLabel(""))  # small left indent to align under field
+        for label, val in [("50k", 50000), ("500k", 500000),
+                           ("1M", 1000000), ("2M", 2000000)]:
+            btn = QPushButton(label)
+            btn.setMinimumWidth(56)
+            btn.setToolTip(f"{val:,} particles")
+            btn.clicked.connect(lambda _, v=val: self.sp_n.setValue(v))
+            n_row.addWidget(btn)
+        n_row.addStretch()
+        sg.addLayout(n_row, r, 0, 1, 4)
+        r += 1
+
+        sg.addWidget(QLabel("Release window"), r, 0)
+        sg.addWidget(self.sp_max_age, r, 1)
+        grid_note = QLabel("Grid: 400×400 (fixed)")
+        grid_note.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        sg.addWidget(grid_note, r, 2, 1, 2)
+        r += 1
+
+        release_hint = QLabel(
+            "A Q(t)-based recommendation will appear in Dust production over time below "
+            "when COBS or a manual dM/dt table is selected.")
+        release_hint.setWordWrap(True)
+        release_hint.setStyleSheet(f"color:{T['text_muted']}; font-size:9px; padding:2px 0 4px 0;")
+        sg.addWidget(release_hint, r, 0, 1, 4)
+        r += 1
+
+        sg.addWidget(QLabel("V₀ reference coefficient (m/s)"), r, 0)
+        sg.addWidget(self.sp_v0, r, 1)
+        sg.addWidget(QLabel("γ (speed-size)"), r, 2)
+        sg.addWidget(self.sp_gamma, r, 3)
+        r += 1
+
+        sg.addWidget(self.lbl_actual_speed, r, 0, 1, 4)
+        r += 1
+
+        sg.addWidget(QLabel("κ (speed-dist)"), r, 0)
+        sg.addWidget(self.sp_mexp, r, 1)
+        seed_row = QHBoxLayout(); seed_row.setSpacing(6)
+        seed_row.addWidget(self.chk_seed); seed_row.addWidget(self.sp_seed)
+        seed_row.addStretch()
+        sg.addLayout(seed_row, r, 2, 1, 2)
+        sim_v.addWidget(grp_sim)
+
+        # ── Ejection direction ───────────────────────────────────────────
+        grp_dir = QGroupBox("Ejection direction")
+        dir_v = QVBoxLayout(grp_dir); dir_v.setSpacing(5)
+
+        dir_row = QHBoxLayout()
+        self.rad_mode_isotropic = QRadioButton("Isotropic")
+        self.rad_mode_sunward   = QRadioButton("Sunward hemisphere")
+        self.rad_mode_active    = QRadioButton("Active area")
+        self.rad_mode_isotropic.setChecked(True)
+        self._mode_group = QButtonGroup(self)
+        for rb in (self.rad_mode_isotropic, self.rad_mode_sunward, self.rad_mode_active):
+            self._mode_group.addButton(rb); dir_row.addWidget(rb)
+        dir_row.addStretch()
+        dir_v.addLayout(dir_row)
+
+        self.sunward_group = QWidget()
+        swg = QGridLayout(self.sunward_group)
+        swg.setContentsMargins(0, 0, 0, 0)
+        swg.setHorizontalSpacing(10); swg.setVerticalSpacing(4)
+
+        self.sp_sunward_expocos = _sp(_dspin(1.0, 0.0, 10.0, 2, 0.1), W_SMALL)
+        self.sp_sunward_expocos.setToolTip(
+            "Illumination-angle exponent ε: V_ej ∝ cos(z)^ε.\n"
+            "ε=1 follows the usual cosine-weighted sunward emission.\n"
+            "Higher values concentrate ejection closer to the subsolar direction.")
+
+        self.cmb_sunward_reference = QComboBox()
+        self.cmb_sunward_reference.addItems([
+            "Emission time — physical",
+            "Observation time — legacy diagnostic",
+        ])
+        self.cmb_sunward_reference.setToolTip(
+            "Which Sun-comet line defines the 3-D sunward hemisphere.\n"
+            "Emission time recomputes the Sun direction at each particle's\n"
+            "release epoch. This is the physical default.\n"
+            "Observation time is the old CTA shortcut, kept only for A/B tests.")
+
+        self.sp_sunward_cone = _sp(_dspin(90.0, 0.0, 90.0, 1, 5.0, "°"), W_MED)
+        self.sp_sunward_cone.setToolTip(
+            "Half-angle around the subsolar direction.\n"
+            "90° = full physical sunward hemisphere.\n"
+            "Smaller values are diagnostic/fitting aids, not the default model.")
+
+        self.chk_projected_sunward = QCheckBox("Require apparent Sun direction on image")
+        self.chk_projected_sunward.setChecked(False)
+        self.chk_projected_sunward.setToolTip(
+            "OFF: physical 3-D sunward hemisphere only. Recommended default.\n"
+            "ON: additionally require the initial ejection direction to project\n"
+            "toward the apparent Sun direction on the current image. This is an\n"
+            "image-plane diagnostic constraint, not a new physical force.")
+
+        swg.addWidget(QLabel("cos(z) exponent ε"), 0, 0); swg.addWidget(self.sp_sunward_expocos, 0, 1)
+        swg.addWidget(QLabel("Sunward reference"), 0, 2); swg.addWidget(self.cmb_sunward_reference, 0, 3)
+        swg.addWidget(QLabel("Cone half-angle"), 1, 0); swg.addWidget(self.sp_sunward_cone, 1, 1)
+        swg.addWidget(self.chk_projected_sunward, 1, 2, 1, 2)
+        self.sunward_group.setVisible(False)
+        dir_v.addWidget(self.sunward_group)
+
+        self.active_area_group = QWidget()
+        aag = QGridLayout(self.active_area_group)
+        aag.setContentsMargins(0, 0, 0, 0); aag.setHorizontalSpacing(10); aag.setVerticalSpacing(4)
+        self.sp_nuc_inc  = _sp(_dspin(45.0, 0.0, 90.0, 1, 1.0, "°"))
+        self.sp_nuc_phi  = _sp(_dspin(0.0, -360.0, 360.0, 1, 5.0, "°"))
+        self.sp_period   = _sp(_dspin(0.5, 0.001, 1000.0, 4, 0.01, " d"))
+        self.sp_lat_min  = _sp(_dspin(-15.0, -90.0, 90.0, 1, 1.0, "°"))
+        self.sp_lat_max  = _sp(_dspin(15.0, -90.0, 90.0, 1, 1.0, "°"))
+        self.sp_lon_min  = _sp(_dspin(-20.0, -360.0, 360.0, 1, 1.0, "°"))
+        self.sp_lon_max  = _sp(_dspin(20.0, -360.0, 360.0, 1, 1.0, "°"))
+        self.chk_isun    = QCheckBox("Sunlit ground only")
+        self.chk_isun.setChecked(True)
+        self.sp_expocos  = _sp(_dspin(1.0, 0.0, 10.0, 2, 0.1))
+        aag.addWidget(QLabel("  Obliquity I"), 0, 0); aag.addWidget(self.sp_nuc_inc, 0, 1)
+        aag.addWidget(QLabel("Subsolar phase Φ (perihelion)"), 0, 2); aag.addWidget(self.sp_nuc_phi, 0, 3)
+        aag.addWidget(QLabel("  Rotation period"), 1, 0); aag.addWidget(self.sp_period, 1, 1)
+        aag.addWidget(self.chk_isun, 1, 2, 1, 2)
+        aag.addWidget(QLabel("  Latitude range"), 2, 0)
+        lat_row = QHBoxLayout(); lat_row.setSpacing(4)
+        lat_row.addWidget(self.sp_lat_min); lat_row.addWidget(QLabel("to")); lat_row.addWidget(self.sp_lat_max)
+        aag.addLayout(lat_row, 2, 1)
+        aag.addWidget(QLabel("Longitude range"), 2, 2)
+        lon_row = QHBoxLayout(); lon_row.setSpacing(4)
+        lon_row.addWidget(self.sp_lon_min); lon_row.addWidget(QLabel("to")); lon_row.addWidget(self.sp_lon_max)
+        aag.addLayout(lon_row, 2, 3)
+        aag.addWidget(QLabel("  cos(z) exponent"), 3, 0); aag.addWidget(self.sp_expocos, 3, 1)
+        self.active_area_group.setVisible(False)
+        dir_v.addWidget(self.active_area_group)
+
+        def _on_mode_changed():
+            self.sunward_group.setVisible(self.rad_mode_sunward.isChecked())
+            self.active_area_group.setVisible(self.rad_mode_active.isChecked())
+        for rb in (self.rad_mode_isotropic, self.rad_mode_sunward, self.rad_mode_active):
+            rb.toggled.connect(_on_mode_changed)
+        sim_v.addWidget(grp_dir)
+
+        # ── Dust production ───────────────────────────────────────────────
+        grp_qt = QGroupBox("Dust production over time")
+        qt_v = QVBoxLayout(grp_qt); qt_v.setSpacing(8)
+
+        # Source selector — 3 visually distinct toggle-style buttons
+        src_lbl = QLabel("Source:")
+        src_lbl.setStyleSheet("font-weight: bold;")
+        qt_v.addWidget(src_lbl)
+
+        self.rad_dmdt_steady = QRadioButton("① Steady  (constant rate)")
+        self.rad_dmdt_cobs   = QRadioButton("② COBS light curve  (scaled by your Afρ)")
+        self.rad_dmdt_manual = QRadioButton("③ Manual table  (dM/dt vs. days to perihelion)")
+        self.rad_dmdt_steady.setChecked(True)
+        _INACTIVE = f"color:{T['text_muted']};"
+        _ACTIVE   = "color:#ffffff; font-weight:bold;"
+        def _style_src(*_):
+            self.rad_dmdt_steady.setStyleSheet(_ACTIVE if self.rad_dmdt_steady.isChecked() else _INACTIVE)
+            self.rad_dmdt_cobs  .setStyleSheet(_ACTIVE if self.rad_dmdt_cobs  .isChecked() else _INACTIVE)
+            self.rad_dmdt_manual.setStyleSheet(_ACTIVE if self.rad_dmdt_manual.isChecked() else _INACTIVE)
+        self._dmdt_mode_group = QButtonGroup(self)
+        for rb in (self.rad_dmdt_steady, self.rad_dmdt_cobs, self.rad_dmdt_manual):
+            self._dmdt_mode_group.addButton(rb)
+            rb.toggled.connect(_style_src)
+            rb.toggled.connect(lambda *_: self._update_run_button_state())
+            rb.toggled.connect(lambda *_: self._update_qt_suggestion_summary_labels())
+            qt_v.addWidget(rb)
+        _style_src()
+
+        self.lbl_steady_qt_note = QLabel(
+            "Constant production is used across the selected release window. "
+            "No Q(t) curve or light-curve-based MC-window recommendation is required.")
+        self.lbl_steady_qt_note.setWordWrap(True)
+        self.lbl_steady_qt_note.setStyleSheet(
+            f"color:{T['text_muted']}; background:{T['input_bg']}; "
+            f"border:1px solid {T['border']}; border-radius:5px; padding:8px;")
+        qt_v.addWidget(self.lbl_steady_qt_note)
+
+        # ── Steady: no extra UI needed ──────────────────────────────────
+
+        # ── COBS group ──────────────────────────────────────────────────
+        self.dmdt_cobs_group = QWidget()
+        cobs_v = QVBoxLayout(self.dmdt_cobs_group)
+        cobs_v.setContentsMargins(0, 4, 0, 0); cobs_v.setSpacing(4)
+        qt_hint = QLabel(
+            "Uses the COBS curve for the SHAPE of production over time,\n"
+            "and your own Afρ measurement(s) for the absolute scale.")
+        qt_hint.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        cobs_v.addWidget(qt_hint)
+        fetch_row = QHBoxLayout()
+        self.btn_fetch_cobs = QPushButton("📡 Fetch COBS light curve")
+        self.btn_fetch_cobs.clicked.connect(self._fetch_cobs_for_qt)
+        self.btn_fetch_cobs.setEnabled(self.main_window is not None)
+        self.lbl_cobs_status = QLabel("No COBS data fetched yet.")
+        self.lbl_cobs_status.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        fetch_row.addWidget(self.btn_fetch_cobs); fetch_row.addWidget(self.lbl_cobs_status)
+        fetch_row.addStretch(); cobs_v.addLayout(fetch_row)
+        # Show at least 3 editable anchor rows by default.  Afρ anchors are
+        # usually 2–3 measurements, so a single visible row makes input
+        # awkward even though the table can scroll.
+        self.tbl_anchors = QTableWidget(3, 2)
+        self.tbl_anchors.setHorizontalHeaderLabels(["Date (YYYY-MM-DD)", "Afρ [cm]"])
+        self.tbl_anchors.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tbl_anchors.verticalHeader().setVisible(False)
+        self.tbl_anchors.verticalHeader().setDefaultSectionSize(30)
+        self.tbl_anchors.setMinimumWidth(300)
+        self.tbl_anchors.setMinimumHeight(120)
+        self.tbl_anchors.setMaximumHeight(180)
+        for _r in range(3):
+            self.tbl_anchors.setItem(_r, 0, QTableWidgetItem(""))
+            self.tbl_anchors.setItem(_r, 1, QTableWidgetItem(""))
+        cobs_v.addWidget(self.tbl_anchors)
+        self.tbl_anchors.itemChanged.connect(lambda *_: self._update_run_button_state())
+        self.tbl_anchors.itemChanged.connect(lambda *_: self._update_qt_suggestion_summary_labels())
+        anchor_btn_row = QHBoxLayout()
+        btn_add_anchor = QPushButton("+ Row"); btn_add_anchor.setMaximumWidth(70)
+        btn_add_anchor.clicked.connect(lambda: self.tbl_anchors.insertRow(self.tbl_anchors.rowCount()))
+        btn_del_anchor = QPushButton("− Row"); btn_del_anchor.setMaximumWidth(70)
+        btn_del_anchor.clicked.connect(self._remove_anchor_row)
+        anchor_btn_row.addWidget(btn_add_anchor); anchor_btn_row.addWidget(btn_del_anchor)
+        anchor_btn_row.addStretch(); cobs_v.addLayout(anchor_btn_row)
+        smooth_row2 = QHBoxLayout()
+        smooth_row2.addWidget(QLabel("Smoothing window:"))
+        self.sp_qt_smooth = QDoubleSpinBox()
+        self.sp_qt_smooth.setRange(0.0, 30.0); self.sp_qt_smooth.setValue(3.0)
+        self.sp_qt_smooth.setSingleStep(0.5); self.sp_qt_smooth.setSuffix(" d")
+        _sp(self.sp_qt_smooth, W_SMALL)
+        smooth_row2.addWidget(self.sp_qt_smooth); smooth_row2.addStretch()
+        cobs_v.addLayout(smooth_row2)
+        qt_v.addWidget(self.dmdt_cobs_group)
+        self.dmdt_cobs_group.setVisible(False)
+
+        # ── Manual table group ──────────────────────────────────────────
+        self.dmdt_manual_group = QWidget()
+        man_v = QVBoxLayout(self.dmdt_manual_group)
+        man_v.setContentsMargins(0, 4, 0, 0); man_v.setSpacing(4)
+        man_hint = QLabel(
+            "Days to perihelion (negative = pre-perihelion) vs. relative dM/dt.\n"
+            "Values are interpolated and normalised to your Afρ scale.")
+        man_hint.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        man_v.addWidget(man_hint)
+        self.tbl_dmdt_manual = QTableWidget(3, 2)
+        self.tbl_dmdt_manual.setHorizontalHeaderLabels(["Days to perihelion", "Relative dM/dt"])
+        self.tbl_dmdt_manual.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tbl_dmdt_manual.verticalHeader().setVisible(False)
+        self.tbl_dmdt_manual.verticalHeader().setDefaultSectionSize(30)
+        self.tbl_dmdt_manual.setMinimumWidth(300)
+        self.tbl_dmdt_manual.setMinimumHeight(100)
+        self.tbl_dmdt_manual.setMaximumHeight(160)
+        for _r in range(3):
+            self.tbl_dmdt_manual.setItem(_r, 0, QTableWidgetItem(""))
+            self.tbl_dmdt_manual.setItem(_r, 1, QTableWidgetItem(""))
+        man_v.addWidget(self.tbl_dmdt_manual)
+        man_btn_row = QHBoxLayout()
+        btn_add_man = QPushButton("+ Row"); btn_add_man.setMaximumWidth(70)
+        btn_add_man.clicked.connect(lambda: self.tbl_dmdt_manual.insertRow(self.tbl_dmdt_manual.rowCount()))
+        btn_del_man = QPushButton("− Row"); btn_del_man.setMaximumWidth(70)
+        btn_del_man.clicked.connect(
+            lambda: self.tbl_dmdt_manual.removeRow(self.tbl_dmdt_manual.currentRow())
+                   if self.tbl_dmdt_manual.currentRow() >= 0 else None)
+        man_btn_row.addWidget(btn_add_man); man_btn_row.addWidget(btn_del_man)
+        man_btn_row.addStretch(); man_v.addLayout(man_btn_row)
+
+        self.tbl_anchors_manual = QTableWidget(1, 2)
+        self.tbl_anchors_manual.setHorizontalHeaderLabels(["Date (YYYY-MM-DD)", "Afρ [cm]"])
+        self.tbl_anchors_manual.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tbl_anchors_manual.verticalHeader().setVisible(False)
+        self.tbl_anchors_manual.verticalHeader().setDefaultSectionSize(30)
+        self.tbl_anchors_manual.setMinimumWidth(300)
+        self.tbl_anchors_manual.setMinimumHeight(60)
+        self.tbl_anchors_manual.setMaximumHeight(90)
+        self.tbl_anchors_manual.setItem(0, 0, QTableWidgetItem(""))
+        self.tbl_anchors_manual.setItem(0, 1, QTableWidgetItem(""))
+        man_v.addWidget(QLabel("Afρ anchor (for absolute scale):"))
+        man_v.addWidget(self.tbl_anchors_manual)
+        qt_v.addWidget(self.dmdt_manual_group)
+        self.dmdt_manual_group.setVisible(False)
+
+        def _on_dmdt_mode():
+            is_cobs = self.rad_dmdt_cobs.isChecked()
+            is_manual = self.rad_dmdt_manual.isChecked()
+            show_preview = is_cobs or is_manual
+            self.dmdt_cobs_group.setVisible(is_cobs)
+            self.dmdt_manual_group.setVisible(is_manual)
+            self.lbl_steady_qt_note.setVisible(not show_preview)
+            if hasattr(self, 'qt_analysis_group'):
+                self.qt_analysis_group.setVisible(show_preview)
+                if show_preview:
+                    QTimer.singleShot(0, self._refresh_qt_plot)
+        self.rad_dmdt_steady.toggled.connect(_on_dmdt_mode)
+        self.rad_dmdt_cobs.toggled.connect(_on_dmdt_mode)
+        self.rad_dmdt_manual.toggled.connect(_on_dmdt_mode)
+
+        sim_v.addWidget(grp_qt)
+        sim_v.addStretch()
+
+        # ── Size-over-time optional table (keep, at bottom of sim_v) ───
+        grp_size_t = QGroupBox("Variable grain size over time (optional)")
+        size_t_v = QVBoxLayout(grp_size_t)
+        self.chk_size_table = QCheckBox("Enable time-varying grain size")
+        size_t_v.addWidget(self.chk_size_table)
+        self.size_table_group = QWidget()
+        size_tg_v = QVBoxLayout(self.size_table_group)
+        size_tg_v.setContentsMargins(0, 0, 0, 0)
+        size_hint2 = QLabel(
+            "Each row overrides r_min / r_max for particles released in that\n"
+            "time window.  Leave empty to use the values above throughout.")
+        size_hint2.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        size_tg_v.addWidget(size_hint2)
+        self.tbl_size_over_time = QTableWidget(0, 4)
+        self.tbl_size_over_time.setHorizontalHeaderLabels(
+            ["Start (d to peri)", "End (d to peri)", "r_min (µm)", "r_max (µm)"])
+        self.tbl_size_over_time.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tbl_size_over_time.verticalHeader().setVisible(False)
+        self.tbl_size_over_time.verticalHeader().setDefaultSectionSize(30)
+        self.tbl_size_over_time.setMinimumWidth(300)
+        self.tbl_size_over_time.setMinimumHeight(70)
+        self.tbl_size_over_time.setMaximumHeight(150)
+        size_tg_v.addWidget(self.tbl_size_over_time)
+        size_t_btn_row = QHBoxLayout()
+        btn_add_size = QPushButton("+ Row"); btn_add_size.setMaximumWidth(70)
+        btn_add_size.clicked.connect(
+            lambda: self.tbl_size_over_time.insertRow(self.tbl_size_over_time.rowCount()))
+        btn_del_size = QPushButton("− Row"); btn_del_size.setMaximumWidth(70)
+        btn_del_size.clicked.connect(
+            lambda: self.tbl_size_over_time.removeRow(self.tbl_size_over_time.currentRow())
+                   if self.tbl_size_over_time.currentRow() >= 0 else None)
+        size_t_btn_row.addWidget(btn_add_size); size_t_btn_row.addWidget(btn_del_size)
+        size_t_btn_row.addStretch(); size_tg_v.addLayout(size_t_btn_row)
+        self.size_table_group.setVisible(False)
+        self.chk_size_table.toggled.connect(self.size_table_group.setVisible)
+        size_t_v.addWidget(self.size_table_group)
+        sim_v.addWidget(grp_size_t)
+
+        # ════════════════════════════════════════════════════════════════
+        # TAB 1 — F-P GUIDE
+        # ════════════════════════════════════════════════════════════════
+        guide_text = QLabel(
+            "Workflow:\n"
+            "  1. On the main panel, match F-P syndynes/synchrones to the tail by eye\n"
+            "     → gives a rough β range and release window estimate (fast).\n"
+            "  2. Convert that β range to grain sizes below (using your grain density ρ).\n"
+            "  3. Click Apply → go to Simulate tab → Run to see a real particle distribution.")
+        guide_text.setStyleSheet(f"color:{T['text_muted']}; font-size:10px;")
+        guide_v.addWidget(guide_text)
+
+        fp_box = QGroupBox("Current F-P model settings (main panel)")
+        fp_v = QGridLayout(fp_box)
+        beta_list_str = ", ".join(f"{b:g}" for b in beta_values) if beta_values else "(none set)"
+        self.lbl_fp_betas  = QLabel(f"β values: {beta_list_str}")
+        self.lbl_fp_maxage = QLabel(f"Maximum dust age: {self.fp_max_age:g} d")
+        dom_text = (f"{self.fp_dominant_age:g} d" if self.fp_dominant_age > 0
+                    else "Not specified")
+        self.lbl_fp_dominant = QLabel(f"Dominant dust age: {dom_text}")
+        fp_v.addWidget(self.lbl_fp_betas, 0, 0)
+        fp_v.addWidget(self.lbl_fp_maxage, 0, 1)
+        fp_v.addWidget(self.lbl_fp_dominant, 1, 0, 1, 2)
+        guide_v.addWidget(fp_box)
+
+        convert_box = QGroupBox("Convert F-P β range → grain-size range")
+        conv_v = QGridLayout(convert_box)
+        conv_v.addWidget(QLabel("Grain density ρ"), 0, 0)
+        conv_v.addWidget(self.sp_rho, 0, 1)
+        self.lbl_guide_suggestion = QLabel()
+        self.lbl_guide_suggestion.setWordWrap(True)
+        self.lbl_guide_suggestion.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        conv_v.addWidget(self.lbl_guide_suggestion, 1, 0, 1, 2)
+        self.btn_apply_fp_guess = QPushButton("Apply to Simulate tab →")
+        conv_v.addWidget(self.btn_apply_fp_guess, 2, 0, 1, 2)
+        guide_v.addWidget(convert_box)
+
+        assumptions_box = QGroupBox("Brightness / phase assumptions")
+        bright_v = QGridLayout(assumptions_box)
+        bright_v.setHorizontalSpacing(10); bright_v.setVerticalSpacing(6)
+
+        self.sp_pv = _sp(_dspin(0.04, 0.001, 1.0, 3, 0.005), W_SMALL)
+        self.sp_pv.setToolTip("Grain geometric albedo p_v (default 0.04).")
+
+        self.cmb_phase_law = QComboBox()
+        self.cmb_phase_law.addItems([
+            "Schleicher composite dust phase function",
+            "Linear–exponential custom",
+            "None / relative morphology only",
+        ])
+        self.cmb_phase_law.setToolTip(
+            "Phase correction is a single frame-wide brightness scalar.\n"
+            "It changes absolute brightness comparison, not one run's contour shape.")
+
+        self.sp_phase_beta = _sp(_dspin(0.024, 0.000, 0.200, 3, 0.001, " mag/deg"), W_WIDE)
+        self.sp_phase_moe  = _sp(_dspin(0.28,  0.000, 2.000, 3, 0.010, " mag"), W_MED)
+        self.sp_phase_woe  = _sp(_dspin(1.5,   0.050, 30.000, 2, 0.100, "°"), W_MED)
+        for w in (self.sp_phase_beta, self.sp_phase_moe, self.sp_phase_woe):
+            w.setToolTip("Used only when Phase law = Linear–exponential custom.")
+
+        self.phase_custom_group = QWidget()
+        pcg = QHBoxLayout(self.phase_custom_group)
+        pcg.setContentsMargins(0, 0, 0, 0); pcg.setSpacing(6)
+        pcg.addWidget(QLabel("β_α")); pcg.addWidget(self.sp_phase_beta)
+        pcg.addWidget(QLabel("m_oe")); pcg.addWidget(self.sp_phase_moe)
+        pcg.addWidget(QLabel("w_oe")); pcg.addWidget(self.sp_phase_woe)
+        pcg.addStretch()
+        self.phase_custom_group.setVisible(False)
+
+        def _on_phase_law_changed(idx):
+            self.phase_custom_group.setVisible(idx == 1)
+        self.cmb_phase_law.currentIndexChanged.connect(_on_phase_law_changed)
+
+        bright_v.addWidget(QLabel("Geometric albedo p_v"), 0, 0)
+        bright_v.addWidget(self.sp_pv, 0, 1)
+        bright_v.addWidget(QLabel("Phase law"), 1, 0)
+        bright_v.addWidget(self.cmb_phase_law, 1, 1, 1, 3)
+        bright_v.addWidget(self.phase_custom_group, 2, 1, 1, 3)
+        guide_v.addWidget(assumptions_box)
+
+        input_box = QGroupBox("Input-file driven configurations")
+        input_v = QVBoxLayout(input_box)
+        input_note = QLabel(
+            "Recommended cases should be distributed as .mcin input files, not hidden GUI presets.\n"
+            "Use Load inputs… to apply a literature-guided configuration, then edit any visible field.\n"
+            "Save inputs… writes the same transparent JSON format for sharing or publication support.")
+        input_note.setWordWrap(True)
+        input_note.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        input_v.addWidget(input_note)
+        fmt_note = QLabel(
+            "Format stores: schema, profile metadata, target/date, interpretation notes, "
+            "and a generic snapshot of all visible MC inputs. Files without schema='CTA_MC_INPUT' are rejected.")
+        fmt_note.setWordWrap(True)
+        fmt_note.setStyleSheet(f"color:{T['text_value']}; font-size:9px;")
+        input_v.addWidget(fmt_note)
+        guide_v.addWidget(input_box)
+
+        guide_v.addStretch()
+
+        def _refresh_guide_suggestion():
+            try:
+                rho = self.sp_rho.value()
+                a_max_um = cta._beta_to_radius_um(beta_lo, rho)
+                a_min_um = cta._beta_to_radius_um(beta_hi, rho)
+                self.lbl_guide_suggestion.setText(
+                    f"→ Suggested: r_min={a_min_um:.3g} µm,  r_max={a_max_um:.3g} µm "
+                    f"(β=[{beta_lo:g}, {beta_hi:g}], ρ={rho:.2g} g/cm³)")
+            except Exception:
+                self.lbl_guide_suggestion.setText("")
+        self.sp_rho.valueChanged.connect(_refresh_guide_suggestion)
+        _refresh_guide_suggestion()
+
+        def _apply_fp_guess():
+            try:
+                rho = self.sp_rho.value()
+                self.sp_r_min.setValue(cta._beta_to_radius_um(beta_hi, rho))
+                self.sp_r_max.setValue(cta._beta_to_radius_um(beta_lo, rho))
+                tabs.setCurrentWidget(page_sim)
+            except Exception:
+                pass
+        self.btn_apply_fp_guess.clicked.connect(_apply_fp_guess)
+
+        # ════════════════════════════════════════════════════════════════
+        # TAB 3 — DISPLAY
+        # ════════════════════════════════════════════════════════════════
+        grp_contour = QGroupBox("Contour extraction")
+        cv = QGridLayout(grp_contour); cv.setHorizontalSpacing(10); cv.setVerticalSpacing(6)
+
+        self.sp_floor = _sp(_dspin(80.0, 0.0, 99.9, 1, 1.0, " %ile"), W_MED)
+        self.sp_floor.setToolTip(
+            "Percentile of non-zero density bins used as the innermost\n"
+            "contour threshold. Used when 'Percentile mode' is selected.\n"
+            "Higher = fewer, tighter contours near the dense coma.")
+        self.sp_nlevels = _sp(QSpinBox(), W_SMALL); self.sp_nlevels.setRange(1, 20)
+        self.sp_nlevels.setValue(3)
+        self.sp_nlevels.setToolTip(
+            "Number of contour rings to trace — applies in both\n"
+            "Percentile and Calibrated mag/arcsec² modes.")
+
+        # Calibrated surface brightness mode — fixed surface-brightness isophote levels
+        self.chk_sb_mode = QCheckBox("Calibrated mag/arcsec² mode")
+        self.chk_sb_mode.setChecked(False)
+        self.chk_sb_mode.setStyleSheet("color:#66ccff;")
+        self.chk_sb_mode.setToolTip(
+            "When checked: extract contours at specific surface brightness\n"
+            "levels [mag/arcsec²] calibrated using your Afρ measurement.\n"
+            "Use fixed surface-brightness isophotes at the same magnitude\n"
+            "levels as the observed image.\n\n"
+            "Requires: Afρ value from Image Overlay → Analysis panel,\n"
+            "and image plate scale (AU/px) set correctly.\n\n"
+            "When unchecked: percentile mode (original CTA method).")
+        cv.addWidget(self.chk_sb_mode, 0, 0, 1, 2)
+
+        self.sb_mode_group = QWidget()
+        sbg = QGridLayout(self.sb_mode_group); sbg.setContentsMargins(0,0,0,0); sbg.setHorizontalSpacing(10)
+
+        btn_load_tycho = QPushButton("📂 Load Tycho photometry…")
+        btn_load_tycho.setToolTip(
+            "Parse a Tycho Tracker ICQ-format export (.txt) and auto-fill\n"
+            "Afρ + Faintest/Brightest levels from its radius-vs-magnitude\n"
+            "profile table. If the file can't be parsed, current values\n"
+            "(or the defaults below) are left untouched.")
+        btn_load_tycho.clicked.connect(self._load_tycho_photometry)
+        self.lbl_tycho_status = QLabel(
+            "No file loaded — using defaults below (or COBS-anchor Afρ).")
+        self.lbl_tycho_status.setWordWrap(True)
+        self.lbl_tycho_status.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        sbg.addWidget(btn_load_tycho, 0, 0, 1, 2)
+        sbg.addWidget(self.lbl_tycho_status, 1, 0, 1, 2)
+
+        self.sp_afrho_cal = _sp(_dspin(500.0, 0.1, 1e7, 1, 10.0, " cm"), W_MED)
+        self.sp_afrho_cal.setToolTip(
+            "Observed Afρ [cm] at the observation date.\n"
+            "Auto-filled from COBS anchor table or a loaded Tycho file\n"
+            "when available. Otherwise enter manually.")
+        self.lbl_afrho_source = QLabel("(enter manually)")
+        self.lbl_afrho_source.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        self.sp_mag_faint = _sp(_dspin(23.0, 10.0, 35.0, 1, 0.5, " mag/\"²"), W_WIDE)
+        self.sp_mag_faint.setToolTip(
+            "Faintest isophote level [mag/arcsec²].\n"
+            "Match the outermost visible isophote of your image.\n"
+            "Auto-filled by 'Load Tycho photometry…' above, or enter\n"
+            "manually by reading it off your image processing software.")
+        self.sp_mag_bright = _sp(_dspin(19.0, 10.0, 35.0, 1, 0.5, " mag/\"²"), W_WIDE)
+        self.sp_mag_bright.setToolTip(
+            "Brightest isophote level [mag/arcsec²].\n"
+            "Match the innermost isophote of your image.\n"
+            "Auto-filled by 'Load Tycho photometry…' above.")
+        afrho_row = QHBoxLayout()
+        afrho_row.addWidget(self.sp_afrho_cal)
+        afrho_row.addWidget(self.lbl_afrho_source)
+        sbg.addWidget(QLabel("Observed Afρ"), 2, 0); sbg.addLayout(afrho_row, 2, 1)
+        sbg.addWidget(QLabel("Faintest level"), 3, 0); sbg.addWidget(self.sp_mag_faint, 3, 1)
+        sbg.addWidget(QLabel("Brightest level"), 4, 0); sbg.addWidget(self.sp_mag_bright, 4, 1)
+        self.sb_mode_group.setVisible(False)
+        cv.addWidget(self.sb_mode_group, 1, 0, 1, 2)
+
+        self.percentile_group = QWidget()
+        pg = QGridLayout(self.percentile_group); pg.setContentsMargins(0,0,0,0); pg.setHorizontalSpacing(10)
+        pg.addWidget(QLabel("Sensitivity (percentile floor)"), 0, 0); pg.addWidget(self.sp_floor, 0, 1)
+        cv.addWidget(self.percentile_group, 1, 0, 1, 2)
+
+        def _on_sb_mode(checked):
+            self.sb_mode_group.setVisible(checked)
+            self.percentile_group.setVisible(not checked)
+            if checked:
+                self._autofill_afrho()
+        self.chk_sb_mode.toggled.connect(_on_sb_mode)
+
+        # sp_nlevels applies to BOTH modes — placed once here so it's
+        # never fought over between the two mode-specific sub-layouts
+        # (a Qt widget can only live in one parent layout at a time;
+        # adding it to both silently strips it from whichever group
+        # loses, leaving that group's "Contour rings" row with no field).
+        cv.addWidget(QLabel("Number of contour rings"), 2, 0)
+        cv.addWidget(self.sp_nlevels, 2, 1)
+
+        auto_note = QLabel("Contour smoothing: auto (1× grid pixel size)")
+        auto_note.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        cv.addWidget(auto_note, 3, 0, 1, 2)
+        disp_v.addWidget(grp_contour)
+
+        self.btn_reextract = QPushButton("↻ Re-extract contour  (fast, no re-sample)")
+        self.btn_reextract.setEnabled(False)
+        self.btn_reextract.setToolTip(
+            "Re-apply the threshold/levels above to the LAST MC density grid\n"
+            "without re-simulating particles — typically < 0.1s.")
+        self.btn_reextract.clicked.connect(self._reextract_contours)
+        disp_v.addWidget(self.btn_reextract)
+
+        # ── Presentation preset ─────────────────────────────────────────
+        grp_present = QGroupBox("PRESENTATION MODE")
+        pv = QGridLayout(grp_present); pv.setHorizontalSpacing(10); pv.setVerticalSpacing(6)
+        self.cmb_mc_view_style = QComboBox()
+        self.cmb_mc_view_style.addItem("Analysis Overlay", "analysis")
+        self.cmb_mc_view_style.addItem("Contour Comparison", "contour")
+        self.cmb_mc_view_style.addItem("Publication Figure", "publication")
+        self.cmb_mc_view_style.setToolTip(
+            "Analysis Overlay keeps the comet image and all diagnostic overlays.\n"
+            "Contour Comparison hides the raster image and compares observed\n"
+            "isophotes with the MC model on white. Publication Figure applies\n"
+            "paper-oriented axes, line weights, and annotation defaults.")
+        self.lbl_mc_view_help = QLabel(
+            "Analysis Overlay: full diagnostic view on the image background.")
+        self.lbl_mc_view_help.setWordWrap(True)
+        self.lbl_mc_view_help.setStyleSheet(
+            f"color:{T['text_muted']}; font-size:9px;")
+        pv.addWidget(QLabel("View style"), 0, 0)
+        pv.addWidget(self.cmb_mc_view_style, 0, 1)
+        pv.addWidget(self.lbl_mc_view_help, 1, 0, 1, 2)
+        disp_v.addWidget(grp_present)
+
+        # ── Observed + model contour appearance ────────────────────────
+        grp_appear = QGroupBox("CONTOUR APPEARANCE")
+        av = QGridLayout(grp_appear); av.setHorizontalSpacing(10); av.setVerticalSpacing(6)
+
+        def _add_color_items(combo, items):
+            for label, color in items:
+                combo.addItem(label, color)
+
+        def _add_line_items(combo):
+            combo.addItem("Solid", "-")
+            combo.addItem("Dashed", "--")
+            combo.addItem("Dash-dot", "-.")
+            combo.addItem("Dotted", ":")
+
+        self.chk_observed_show = QCheckBox("Show observed isophotes")
+        self.chk_observed_show.setChecked(True)
+        self.chk_observed_show.setToolTip(
+            "In contour-only modes this directly shows/hides isophotes derived\n"
+            "from the loaded image. In Analysis Overlay the main DISPLAY\n"
+            "checkbox 'Isophotes (from image)' remains the master switch.")
+        self.cmb_observed_color = QComboBox()
+        _add_color_items(self.cmb_observed_color, [
+            ("Green (analysis)", ISOPHOTE_COLOR),
+            ("Black", "black"),
+            ("White", "white"),
+            ("Blue", "#1f5fbf"),
+        ])
+        self.cmb_observed_ls = QComboBox(); _add_line_items(self.cmb_observed_ls)
+        self.sp_observed_lw = _dspin(0.6, 0.2, 5.0, 1, 0.1)
+        self.sp_observed_lw.setSuffix(" pt")
+        self.sp_observed_lw.setMaximumWidth(W_SMALL + 18)
+        self.obs_op_slider = QSlider(Qt.Orientation.Horizontal)
+        self.obs_op_slider.setRange(10, 100); self.obs_op_slider.setValue(75)
+        self.obs_op_label = QLabel("0.75"); self.obs_op_label.setMinimumWidth(32)
+
+        av.addWidget(QLabel("Observed isophotes"), 0, 0, 1, 3)
+        av.addWidget(self.chk_observed_show, 1, 0, 1, 3)
+        av.addWidget(QLabel("Color"), 2, 0); av.addWidget(self.cmb_observed_color, 2, 1, 1, 2)
+        av.addWidget(QLabel("Line style"), 3, 0); av.addWidget(self.cmb_observed_ls, 3, 1, 1, 2)
+        av.addWidget(QLabel("Width"), 4, 0); av.addWidget(self.sp_observed_lw, 4, 1, 1, 2)
+        av.addWidget(QLabel("Opacity"), 5, 0); av.addWidget(self.obs_op_slider, 5, 1); av.addWidget(self.obs_op_label, 5, 2)
+
+        self.cmb_model_color = QComboBox()
+        _add_color_items(self.cmb_model_color, [
+            ("Magenta", "#ff3399"),
+            ("Red", "#e31a1c"),
+            ("Black", "black"),
+            ("Blue", "#1f78b4"),
+        ])
+        self.cmb_model_ls = QComboBox(); _add_line_items(self.cmb_model_ls)
+        self.mc_lw_slider = QSlider(Qt.Orientation.Horizontal)
+        self.mc_lw_slider.setRange(5, 50); self.mc_lw_slider.setValue(12)
+        self.mc_lw_label = QLabel("1.2"); self.mc_lw_label.setMinimumWidth(30)
+        self.mc_op_slider = QSlider(Qt.Orientation.Horizontal)
+        self.mc_op_slider.setRange(10, 100); self.mc_op_slider.setValue(95)
+        self.mc_op_label = QLabel("0.95"); self.mc_op_label.setMinimumWidth(30)
+
+        av.addWidget(QLabel("Monte Carlo model contours"), 6, 0, 1, 3)
+        av.addWidget(QLabel("Color"), 7, 0); av.addWidget(self.cmb_model_color, 7, 1, 1, 2)
+        av.addWidget(QLabel("Line style"), 8, 0); av.addWidget(self.cmb_model_ls, 8, 1, 1, 2)
+        av.addWidget(QLabel("Width"), 9, 0); av.addWidget(self.mc_lw_slider, 9, 1); av.addWidget(self.mc_lw_label, 9, 2)
+        av.addWidget(QLabel("Opacity"), 10, 0); av.addWidget(self.mc_op_slider, 10, 1); av.addWidget(self.mc_op_label, 10, 2)
+
+        self.chk_grayscale_safe = QCheckBox("Grayscale-safe line styles")
+        self.chk_grayscale_safe.setToolTip(
+            "Force observed contours to black solid and model contours to\n"
+            "black dashed, so the figure remains distinguishable in grayscale.")
+        av.addWidget(self.chk_grayscale_safe, 11, 0, 1, 3)
+        disp_v.addWidget(grp_appear)
+
+        # ── Figure layout + export ──────────────────────────────────────
+        grp_layout = QGroupBox("FIGURE LAYOUT")
+        fv = QGridLayout(grp_layout); fv.setHorizontalSpacing(10); fv.setVerticalSpacing(6)
+        self.cmb_mc_background = QComboBox()
+        self.cmb_mc_background.addItem("Comet image", "image")
+        self.cmb_mc_background.addItem("White", "white")
+        self.cmb_mc_coordinates = QComboBox()
+        self.cmb_mc_coordinates.addItem("Image pixels", "pixels")
+        self.cmb_mc_coordinates.addItem("Projected distance (km)", "projected_km")
+        self.cmb_mc_coordinates.addItem("Hide axes", "hide")
+        self.chk_mc_legend = QCheckBox("Show legend"); self.chk_mc_legend.setChecked(True)
+        self.chk_mc_title = QCheckBox("Show title"); self.chk_mc_title.setChecked(True)
+        self.chk_mc_compass = QCheckBox("Show N/E compass"); self.chk_mc_compass.setChecked(True)
+        self.chk_mc_info = QCheckBox("Show MC parameters box")
+        self.chk_mc_info.setChecked(True)
+        self.btn_export_mc_figure = QPushButton("Export figure…")
+        self.btn_export_mc_figure.setToolTip(
+            "Export the current main-canvas figure as PNG, TIFF, PDF, or SVG.\n"
+            "The plot toolbar and application interface are not included.")
+        self.btn_export_mc_figure.clicked.connect(self._export_current_mc_figure)
+
+        fv.addWidget(QLabel("Background"), 0, 0); fv.addWidget(self.cmb_mc_background, 0, 1)
+        fv.addWidget(QLabel("Coordinates"), 1, 0); fv.addWidget(self.cmb_mc_coordinates, 1, 1)
+        fv.addWidget(self.chk_mc_legend, 2, 0)
+        fv.addWidget(self.chk_mc_title, 2, 1)
+        fv.addWidget(self.chk_mc_compass, 3, 0)
+        fv.addWidget(self.chk_mc_info, 3, 1)
+        fv.addWidget(self.btn_export_mc_figure, 4, 0, 1, 2)
+        disp_v.addWidget(grp_layout)
+
+        def _set_combo_data(combo, value):
+            idx = combo.findData(value)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+
+        self._applying_presentation_preset = False
+
+        def _apply_presentation_preset(index):
+            if self._applying_presentation_preset:
+                return
+            self._applying_presentation_preset = True
+            try:
+                mode = self.cmb_mc_view_style.itemData(index)
+                if mode == "analysis":
+                    self.lbl_mc_view_help.setText(
+                        "Analysis Overlay: full diagnostic view on the image background.")
+                    _set_combo_data(self.cmb_mc_background, "image")
+                    _set_combo_data(self.cmb_mc_coordinates, "pixels")
+                    _set_combo_data(self.cmb_observed_color, ISOPHOTE_COLOR)
+                    _set_combo_data(self.cmb_observed_ls, "-")
+                    _set_combo_data(self.cmb_model_color, "#ff3399")
+                    _set_combo_data(self.cmb_model_ls, "--")
+                    self.sp_observed_lw.setValue(0.6)
+                    self.obs_op_slider.setValue(75)
+                    self.mc_lw_slider.setValue(12)
+                    self.mc_op_slider.setValue(95)
+                    self.chk_mc_legend.setChecked(True)
+                    self.chk_mc_title.setChecked(True)
+                    self.chk_mc_compass.setChecked(True)
+                    self.chk_mc_info.setChecked(True)
+                    self.chk_grayscale_safe.setChecked(False)
+                elif mode == "contour":
+                    self.lbl_mc_view_help.setText(
+                        "Contour Comparison: observed isophotes and MC contours only, on white.")
+                    _set_combo_data(self.cmb_mc_background, "white")
+                    _set_combo_data(self.cmb_mc_coordinates, "pixels")
+                    _set_combo_data(self.cmb_observed_color, "black")
+                    _set_combo_data(self.cmb_observed_ls, "-")
+                    _set_combo_data(self.cmb_model_color, "#ff3399")
+                    _set_combo_data(self.cmb_model_ls, "-")
+                    self.sp_observed_lw.setValue(1.0)
+                    self.obs_op_slider.setValue(100)
+                    self.mc_lw_slider.setValue(12)
+                    self.mc_op_slider.setValue(100)
+                    self.chk_mc_legend.setChecked(True)
+                    self.chk_mc_title.setChecked(True)
+                    self.chk_mc_compass.setChecked(False)
+                    self.chk_mc_info.setChecked(False)
+                    self.chk_grayscale_safe.setChecked(False)
+                else:
+                    self.lbl_mc_view_help.setText(
+                        "Publication Figure: paper-oriented white background and projected-distance axes.")
+                    _set_combo_data(self.cmb_mc_background, "white")
+                    _set_combo_data(self.cmb_mc_coordinates, "projected_km")
+                    _set_combo_data(self.cmb_observed_color, "black")
+                    _set_combo_data(self.cmb_observed_ls, "-")
+                    _set_combo_data(self.cmb_model_color, "#ff3399")
+                    _set_combo_data(self.cmb_model_ls, "-")
+                    self.sp_observed_lw.setValue(1.2)
+                    self.obs_op_slider.setValue(100)
+                    self.mc_lw_slider.setValue(12)
+                    self.mc_op_slider.setValue(100)
+                    self.chk_mc_legend.setChecked(True)
+                    self.chk_mc_title.setChecked(False)
+                    self.chk_mc_compass.setChecked(False)
+                    self.chk_mc_info.setChecked(False)
+                    self.chk_grayscale_safe.setChecked(False)
+            finally:
+                self._applying_presentation_preset = False
+            _push_mc_style()
+
+        def _push_mc_style(*_):
+            self.mc_lw_label.setText(f"{self.mc_lw_slider.value()/10:.1f}")
+            self.mc_op_label.setText(f"{self.mc_op_slider.value()/100:.2f}")
+            self.obs_op_label.setText(f"{self.obs_op_slider.value()/100:.2f}")
+            if self.main_window is None:
+                return
+            self.main_window.ctrl._mc_style = dict(
+                lw=self.mc_lw_slider.value()/10,
+                alpha=self.mc_op_slider.value()/100,
+                info_box=self.chk_mc_info.isChecked(),
+                view_style=self.cmb_mc_view_style.currentData(),
+                background=self.cmb_mc_background.currentData(),
+                coordinates=self.cmb_mc_coordinates.currentData(),
+                observed_show=self.chk_observed_show.isChecked(),
+                observed_color=self.cmb_observed_color.currentData(),
+                observed_lw=self.sp_observed_lw.value(),
+                observed_alpha=self.obs_op_slider.value()/100,
+                observed_ls=self.cmb_observed_ls.currentData(),
+                model_color=self.cmb_model_color.currentData(),
+                model_ls=self.cmb_model_ls.currentData(),
+                show_legend=self.chk_mc_legend.isChecked(),
+                show_title=self.chk_mc_title.isChecked(),
+                show_compass=self.chk_mc_compass.isChecked(),
+                grayscale_safe=self.chk_grayscale_safe.isChecked())
+            mw = self.main_window
+            mw.canvas._vis = mw.ctrl.get_vis()
+            if mw._model:
+                ov = mw.ctrl.get_overlay()
+                mw.canvas.draw_model(
+                    mw._model, ov["img_arr"] if mw.ctrl._img_arr is not None else None)
+
+        self.cmb_mc_view_style.currentIndexChanged.connect(_apply_presentation_preset)
+        for sig in [
+                self.mc_lw_slider.valueChanged,
+                self.mc_op_slider.valueChanged,
+                self.obs_op_slider.valueChanged,
+                self.sp_observed_lw.valueChanged,
+                self.chk_mc_info.toggled,
+                self.chk_observed_show.toggled,
+                self.chk_grayscale_safe.toggled,
+                self.chk_mc_legend.toggled,
+                self.chk_mc_title.toggled,
+                self.chk_mc_compass.toggled,
+                self.cmb_mc_background.currentIndexChanged,
+                self.cmb_mc_coordinates.currentIndexChanged,
+                self.cmb_observed_color.currentIndexChanged,
+                self.cmb_observed_ls.currentIndexChanged,
+                self.cmb_model_color.currentIndexChanged,
+                self.cmb_model_ls.currentIndexChanged]:
+            sig.connect(_push_mc_style)
+
+        # Restore the current main-window style without forcing a preset.
+        if self.main_window is not None:
+            st = self.main_window.ctrl._mc_style
+            _set_combo_data(self.cmb_mc_view_style, st.get("view_style", "analysis"))
+            _set_combo_data(self.cmb_mc_background, st.get("background", "image"))
+            _set_combo_data(self.cmb_mc_coordinates, st.get("coordinates", "pixels"))
+            _set_combo_data(self.cmb_observed_color, st.get("observed_color", ISOPHOTE_COLOR))
+            _set_combo_data(self.cmb_observed_ls, st.get("observed_ls", "-"))
+            _set_combo_data(self.cmb_model_color, st.get("model_color", "#ff3399"))
+            _set_combo_data(self.cmb_model_ls, st.get("model_ls", "--"))
+            self.chk_observed_show.setChecked(st.get("observed_show", True))
+            self.sp_observed_lw.setValue(st.get("observed_lw", 0.6))
+            self.obs_op_slider.setValue(round(st.get("observed_alpha", 0.75)*100))
+            self.mc_lw_slider.setValue(round(st.get("lw", 1.2)*10))
+            self.mc_op_slider.setValue(round(st.get("alpha", 0.95)*100))
+            self.chk_mc_info.setChecked(st.get("info_box", True))
+            self.chk_mc_legend.setChecked(st.get("show_legend", True))
+            self.chk_mc_title.setChecked(st.get("show_title", True))
+            self.chk_mc_compass.setChecked(st.get("show_compass", True))
+            self.chk_grayscale_safe.setChecked(st.get("grayscale_safe", False))
+
+        self.mc_lw_label.setText(f"{self.mc_lw_slider.value()/10:.1f}")
+        self.mc_op_label.setText(f"{self.mc_op_slider.value()/100:.2f}")
+        self.obs_op_label.setText(f"{self.obs_op_slider.value()/100:.2f}")
+        _push_mc_style()
+
+        disp_v.addStretch()
+
+        # ════════════════════════════════════════════════════════════════
+        # ASSEMBLE TABS + BOTTOM BAR
+        # ════════════════════════════════════════════════════════════════
+        # ════════════════════════════════════════════════════════════════
+        # Q(t) PREVIEW + MC-WINDOW GUIDANCE
+        # Embedded inside Dust production over time.  It is shown only for
+        # COBS or manual dM/dt sources; steady production needs no preview.
+        # ════════════════════════════════════════════════════════════════
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+
+        self.qt_analysis_group = QGroupBox("Q(t) preview and MC-window guidance")
+        qt_prev_v = QVBoxLayout(self.qt_analysis_group)
+        qt_prev_v.setSpacing(8)
+
+        qt_intro = QLabel(
+            "The curve below is the release-time weighting used by the Monte Carlo sampler. "
+            "Use the recommendation as a starting point, then validate the final window "
+            "against the observed morphology.")
+        qt_intro.setWordWrap(True)
+        qt_intro.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        qt_prev_v.addWidget(qt_intro)
+
+        # F-P morphology guidance comes from the main panel. The user
+        # supplies one representative dominant age; maximum dust age is
+        # automatically derived from the largest listed synchrone age.
+        grp_fp_age = QGroupBox("F-P morphology guidance  (automatic)")
+        fpag = QGridLayout(grp_fp_age)
+        fpag.setHorizontalSpacing(12); fpag.setVerticalSpacing(6)
+
+        fpag.addWidget(QLabel("Dominant dust age"), 0, 0)
+        self.lbl_fp_dom_guidance = QLabel()
+        self.lbl_fp_dom_guidance.setStyleSheet(
+            "color:#f4f8ff; font-weight:600;")
+        fpag.addWidget(self.lbl_fp_dom_guidance, 0, 1)
+
+        fpag.addWidget(QLabel("Maximum dust age"), 1, 0)
+        self.lbl_fp_max_guidance = QLabel()
+        self.lbl_fp_max_guidance.setStyleSheet(
+            "color:#f4f8ff; font-weight:600;")
+        fpag.addWidget(self.lbl_fp_max_guidance, 1, 1)
+
+        fp_note = QLabel(
+            "Dominant age is your F-P morphology interpretation. Maximum dust age "
+            "is the largest synchrone age and is applied as the upper limit for "
+            "MC-window guidance. Q(t) supplies the release-time weighting.")
+        fp_note.setWordWrap(True)
+        fp_note.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        fpag.addWidget(fp_note, 2, 0, 1, 2)
+        qt_prev_v.addWidget(grp_fp_age)
+        self._update_fp_guidance_labels()
+
+        self._qt_suggested_window = None
+        self._qt_suggested_window_range = None
+        self._qt_suggested_window_note = ""
+        self._qt_qonly_window = None
+        self._qt_fp_adjustment = ""
+        self._qt_coverage = None
+        self._qt_recommendation_quality = ""
+        self._qt_provisional_window = None
+
+        suggest_card = QFrame()
+        suggest_card.setStyleSheet(
+            "QFrame { background:#13202b; border:1px solid #4a8adf; "
+            "border-radius:7px; } QLabel { border:none; background:transparent; }")
+        suggest_layout = QHBoxLayout(suggest_card)
+        suggest_layout.setContentsMargins(12, 10, 12, 10)
+        suggest_layout.setSpacing(12)
+        self.lbl_qt_suggest_summary = QLabel(
+            "MC-window recommendation not calculated yet.\n"
+            "Enter/fetch Q(t) data, then refresh the preview.")
+        self.lbl_qt_suggest_summary.setWordWrap(True)
+        self.lbl_qt_suggest_summary.setMinimumHeight(54)
+        self.lbl_qt_suggest_summary.setStyleSheet(
+            "color:#f4f8ff; font-size:13px; font-weight:700;")
+        suggest_layout.addWidget(self.lbl_qt_suggest_summary, 1)
+
+        self.btn_apply_qt_suggested_window = QPushButton("Use recommended window")
+        self.btn_apply_qt_suggested_window.setEnabled(False)
+        self.btn_apply_qt_suggested_window.setAutoDefault(False)
+        self.btn_apply_qt_suggested_window.setDefault(False)
+        self.btn_apply_qt_suggested_window.setMinimumWidth(190)
+        self.btn_apply_qt_suggested_window.setToolTip(
+            "Copy the recommended value into Simulation → Release window. "
+            "The value remains editable and is not a unique physical solution.")
+        self.btn_apply_qt_suggested_window.clicked.connect(
+            self._apply_qt_suggested_window)
+        suggest_layout.addWidget(self.btn_apply_qt_suggested_window, 0, Qt.AlignmentFlag.AlignVCenter)
+        qt_prev_v.addWidget(suggest_card)
+
+        self._qt_fig  = Figure(figsize=(5, 3.2), facecolor=T['panel_bg'])
+        self._qt_canvas = FigureCanvasQTAgg(self._qt_fig)
+        self._qt_canvas.setMinimumHeight(300)
+        qt_prev_v.addWidget(self._qt_canvas, 1)
+
+        self._qt_info_lbl = QLabel("")
+        self._qt_info_lbl.setWordWrap(True)
+        self._qt_info_lbl.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+        qt_prev_v.addWidget(self._qt_info_lbl)
+
+        btn_qt_refresh = QPushButton("↻  Refresh Q(t) plot")
+        btn_qt_refresh.setToolTip(
+            "Re-draw the Q(t) preview using current COBS data and\n"
+            "anchor values. Fetch COBS data first in the COBS source section above.")
+        btn_qt_refresh.clicked.connect(self._refresh_qt_plot)
+        qt_prev_v.addWidget(btn_qt_refresh, 0, Qt.AlignmentFlag.AlignLeft)
+
+        qt_v.addWidget(self.qt_analysis_group)
+        self.qt_analysis_group.setVisible(False)
+
+        # Debounced live refresh: source inputs, F-P constraints, and the
+        # current release window all affect the recommendation.  Waiting a
+        # short moment avoids recomputing on every keystroke while a table
+        # cell is still being edited.
+        self._qt_refresh_timer = QTimer(self)
+        self._qt_refresh_timer.setSingleShot(True)
+        self._qt_refresh_timer.setInterval(350)
+        self._qt_refresh_timer.timeout.connect(self._refresh_qt_plot)
+
+        def _schedule_qt_refresh(*_):
+            self._update_qt_suggestion_summary_labels()
+            if self.rad_dmdt_cobs.isChecked() or self.rad_dmdt_manual.isChecked():
+                self._qt_refresh_timer.start()
+
+        self.sp_max_age.valueChanged.connect(_schedule_qt_refresh)
+        self.sp_qt_smooth.valueChanged.connect(_schedule_qt_refresh)
+        self.tbl_anchors.itemChanged.connect(_schedule_qt_refresh)
+        self.tbl_dmdt_manual.itemChanged.connect(_schedule_qt_refresh)
+
+        _on_dmdt_mode()
+
+        # Track review/confirmation tab visits. Q(t) now lives in Simulation.
+        tabs.currentChanged.connect(self._on_mc_tab_changed)
+
+        tabs.addTab(page_guide, "1 · F-P Guide")
+        tabs.addTab(page_sim,   "2 · Simulation")
+        tabs.addTab(page_disp,  "3 · Display")
+
+        tabs_scroll = QScrollArea()
+        tabs_scroll.setWidgetResizable(True)
+        tabs_scroll.setWidget(tabs)
+        tabs_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        vbox.addWidget(tabs_scroll, 1)
+
+        # ── Run button (full width) ──────────────────────────────────────
+        self.btn_run = QPushButton("▶  Run Monte Carlo  →  contour appears on main canvas")
+        # Run must always be an explicit click.  In a QDialog, enabled push
+        # buttons may otherwise become the default button after another
+        # control is applied, which makes the workflow look as if CTA has
+        # selected Run automatically.
+        self.btn_run.setAutoDefault(False)
+        self.btn_run.setDefault(False)
+        self.btn_run.setMinimumHeight(36)
+        self.btn_run.setStyleSheet(
+            "QPushButton { background:#1a6e2e; color:white; font-weight:bold; border-radius:4px; }"
+            "QPushButton:hover { background:#21883a; }"
+            "QPushButton:disabled { background:#2a3a2e; color:#555; }")
+        self.btn_run.clicked.connect(self._run)
+        vbox.addWidget(self.btn_run)
+
+        # ── Progress bar + status (below run button) ─────────────────────
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100); self.progress.setValue(0)
+        self.progress.setFormat("0%")
+        self.progress.setMaximumHeight(18); self.progress.setTextVisible(True)
+        vbox.addWidget(self.progress)
+
+        self.lbl_status = QLabel("Set parameters, then click Run.")
+        self.lbl_status.setWordWrap(True)
+        self.lbl_status.setStyleSheet(f"color:{T['text_muted']}; font-size:10px;")
+        vbox.addWidget(self.lbl_status)
+
+        # ── Bottom action bar ─────────────────────────────────────────────
+        bot = QHBoxLayout()
+        btn_reset = QPushButton("↺ Reset")
+        btn_reset.setToolTip("Reset all fields to factory defaults.")
+        btn_reset.clicked.connect(self._reset_to_defaults)
+        btn_save_input = QPushButton("💾 Save inputs as…")
+        btn_save_input.setToolTip("Save the current edited GUI inputs as a new .mcin file.")
+        btn_save_input.clicked.connect(self._save_input_file)
+        btn_load_input = QPushButton("📂 Load inputs…")
+        btn_load_input.setToolTip("Load a .mcin file as an editable template. You can edit before running MC.")
+        btn_load_input.clicked.connect(self._load_input_file)
+        btn_report = QPushButton("📄 Report…")
+        btn_report.setToolTip("Preview and save a plain-text parameter summary.")
+        btn_report.clicked.connect(self._preview_report)
+        btn_close = QPushButton("Close"); btn_close.setMaximumWidth(80)
+        btn_close.clicked.connect(self.close)
+        bot.addWidget(btn_reset); bot.addWidget(btn_save_input)
+        bot.addWidget(btn_load_input); bot.addWidget(btn_report)
+        bot.addStretch(); bot.addWidget(btn_close)
+        vbox.addLayout(bot)
+
+        self._default_state = self._collect_state()
+        self._default_state["mc_lw_slider"] = ("slider", 12)
+        self._default_state["mc_op_slider"] = ("slider", 95)
+        self._default_state["chk_mc_info"]  = ("check", True)
+        if MCWindow._saved_state is not None:
+            self._apply_state(MCWindow._saved_state)
+
+        self._update_qt_suggestion_summary_labels()
+        self._update_run_button_state()
+
+    def _update_fp_guidance_labels(self):
+        """Refresh the read-only F-P guidance shown in the MC window."""
+        dom = float(getattr(self, 'fp_dominant_age', 0.0) or 0.0)
+        max_age = float(getattr(self, 'fp_max_age', 0.0) or 0.0)
+        if hasattr(self, 'lbl_fp_dom_guidance'):
+            self.lbl_fp_dom_guidance.setText(
+                f"{dom:g} d" if dom > 0
+                else "Not specified — Q(t) sets the lower guidance")
+        if hasattr(self, 'lbl_fp_max_guidance'):
+            self.lbl_fp_max_guidance.setText(
+                f"{max_age:g} d  (largest synchrone age)"
+                if max_age > 0 else "Unavailable")
+        if hasattr(self, 'lbl_fp_maxage'):
+            self.lbl_fp_maxage.setText(
+                f"Maximum dust age: {max_age:g} d"
+                if max_age > 0 else "Maximum dust age: unavailable")
+        if hasattr(self, 'lbl_fp_dominant'):
+            self.lbl_fp_dominant.setText(
+                f"Dominant dust age: {dom:g} d"
+                if dom > 0 else "Dominant dust age: Not specified")
+
+    def update_fp_guidance(self, fp_sync_ages, fp_dominant_age=0.0):
+        """Synchronize an already-open MC window with the main F-P panel."""
+        try:
+            ages = sorted({float(a) for a in (fp_sync_ages or [])
+                           if float(a) > 0})
+        except Exception:
+            ages = []
+        self.fp_sync_ages = ages
+        self.fp_max_age = max(ages) if ages else 0.0
+        try:
+            self.fp_dominant_age = max(0.0, float(fp_dominant_age))
+        except Exception:
+            self.fp_dominant_age = 0.0
+        if self.fp_max_age > 0 and self.fp_dominant_age > self.fp_max_age:
+            self.fp_dominant_age = self.fp_max_age
+        self._update_fp_guidance_labels()
+        if hasattr(self, '_qt_fig'):
+            QTimer.singleShot(0, self._refresh_qt_plot)
+
+    def _update_qt_suggestion_summary_labels(self, assessment: str = ""):
+        """Update the Q(t) recommendation/coverage card."""
+        val = getattr(self, '_qt_suggested_window', None)
+        rng = getattr(self, '_qt_suggested_window_range', None)
+        note = getattr(self, '_qt_suggested_window_note', '') or ''
+        cur = float(self.sp_max_age.value()) if hasattr(self, 'sp_max_age') else 0.0
+        coverage = getattr(self, '_qt_coverage', None)
+
+        if val is None:
+            enabled = False
+            if self.rad_dmdt_cobs.isChecked() and isinstance(coverage, dict):
+                quality = coverage.get('quality', 'INSUFFICIENT')
+                lookback = float(coverage.get('reliable_lookback_days', 0.0) or 0.0)
+                frac = 100.0 * float(coverage.get('coverage_fraction', 0.0) or 0.0)
+                msg = f"MC-window recommendation unavailable   |   COBS coverage: {quality}"
+                msg += (f"\nReliable recent lookback: {lookback:.0f} d "
+                        f"({frac:.0f}% of F-P maximum age)")
+                provisional = getattr(self, '_qt_provisional_window', None)
+                if provisional is not None:
+                    msg += f"\nProvisional Q(t)-only value: {float(provisional):.0f} d — not applied automatically"
+                reason = coverage.get('reason', '') or note
+                if reason:
+                    msg += f"\n{reason}"
+                if quality in ('PARTIAL', 'INSUFFICIENT') and lookback > 0:
+                    msg += ("\nRun MC may still be used with a manually selected window. "
+                            "If the window exceeds the supported lookback, CTA will "
+                            "ask before applying flat edge extrapolation.")
+            else:
+                msg = ("MC-window recommendation not calculated yet.\n"
+                       "Enter/fetch Q(t) data, then refresh the preview.")
+                if note:
+                    msg += f"\n{note}"
+        else:
+            enabled = True
+            msg = f"Recommended MC window: {float(val):.0f} d"
+            if rng is not None:
+                msg += f"   |   Suggested range: {float(rng[0]):.0f}–{float(rng[1]):.0f} d"
+            msg += f"\nCurrent release window: {cur:.1f} d"
+            qonly = getattr(self, '_qt_qonly_window', None)
+            if qonly is not None:
+                msg += f"\nQ(t)-only recommendation: {float(qonly):.0f} d"
+            adjustment = getattr(self, '_qt_fp_adjustment', '') or ''
+            if adjustment:
+                msg += f"   |   F-P adjustment: {adjustment}"
+            if isinstance(coverage, dict):
+                msg += (f"\nCOBS coverage: {coverage.get('quality','')} — "
+                        f"{float(coverage.get('reliable_lookback_days',0.0)):.0f} d reliable lookback")
+            if assessment:
+                msg += f"\n{assessment}"
+            elif note:
+                msg += f"\n{note}"
+
+        if hasattr(self, 'lbl_qt_suggest_summary'):
+            self.lbl_qt_suggest_summary.setText(msg)
+        if hasattr(self, 'btn_apply_qt_suggested_window'):
+            self.btn_apply_qt_suggested_window.setEnabled(enabled)
+            if enabled:
+                self.btn_apply_qt_suggested_window.setText(
+                    f"Use recommended ({float(val):.0f} d)")
+            else:
+                self.btn_apply_qt_suggested_window.setText("Recommendation unavailable")
+
+    def _usable_qt_sampling_arrays(self, qt_result=None):
+        """Return finite, time-sorted Q(t) arrays usable by the MC sampler.
+
+        Preference order:
+          1. the recent continuous segment selected by the coverage analyser;
+          2. the calibrated raw Q(t) curve itself.
+
+        F-P age guidance and the coverage quality gate control only whether CTA
+        may issue an automatic release-window recommendation.  They must not
+        erase an otherwise valid COBS Q(t) curve or prevent a user-selected MC
+        window from running.  The fallback is therefore deliberate: it keeps
+        automatic Apply disabled, while allowing explicit simulation with the
+        documented flat-edge extrapolation used by _sample_weighted_ages().
+        """
+        coverage = getattr(self, '_qt_coverage', None)
+        if isinstance(coverage, dict):
+            t = np.asarray(coverage.get('sampling_t_jd', []), dtype=float)
+            q = np.asarray(coverage.get('sampling_q', []), dtype=float)
+            if (t.size >= 2 and q.size == t.size and
+                    np.all(np.isfinite(t)) and np.all(np.isfinite(q))):
+                order = np.argsort(t)
+                return t[order], q[order], 'coverage-segment'
+
+        result = qt_result if isinstance(qt_result, dict) else getattr(self, '_last_qt_result', None)
+        if not isinstance(result, dict):
+            return np.array([], dtype=float), np.array([], dtype=float), 'none'
+
+        t = np.asarray(result.get('t_jd', []), dtype=float)
+        q = np.asarray(result.get('Q_kg_s', []), dtype=float)
+        if t.size != q.size or t.size < 2:
+            return np.array([], dtype=float), np.array([], dtype=float), 'none'
+
+        mask = np.isfinite(t) & np.isfinite(q) & (q >= 0.0)
+        # Release times are sampled only at or before the observation epoch.
+        mask &= (t <= float(self.obs_jd) + 1e-9)
+        t = t[mask]; q = q[mask]
+        if t.size < 2:
+            return np.array([], dtype=float), np.array([], dtype=float), 'none'
+
+        order = np.argsort(t)
+        t = t[order]; q = q[order]
+        # np.interp expects increasing abscissae.  Keep one value per timestamp;
+        # repeated dates are common in COBS and the calibrated curve is already
+        # smoothed, so averaging duplicates is the least surprising choice.
+        unique_t, inverse = np.unique(t, return_inverse=True)
+        if unique_t.size != t.size:
+            q_sum = np.zeros(unique_t.size, dtype=float)
+            q_n = np.zeros(unique_t.size, dtype=float)
+            np.add.at(q_sum, inverse, q)
+            np.add.at(q_n, inverse, 1.0)
+            q = q_sum / np.maximum(q_n, 1.0)
+            t = unique_t
+        if t.size < 2:
+            return np.array([], dtype=float), np.array([], dtype=float), 'none'
+        return t, q, 'raw-qt-fallback'
+
+    def _qt_source_ready_for_run(self):
+        """Return (ready, reason) for the selected dust-production source.
+
+        Coverage quality controls automatic MC-window inference only.  A valid
+        calibrated COBS Q(t) curve remains runnable even when F-P maximum age is
+        unavailable or the continuous-coverage classifier is INSUFFICIENT.
+        """
+        try:
+            self._qt_run_coverage_warning = ""
+            self._qt_run_extrapolation_days = 0.0
+            if self.rad_dmdt_cobs.isChecked():
+                anchors = self._read_anchor_table()
+                has_curve = bool(getattr(self, '_cobs_obs_list', None) or
+                                 getattr(self, '_cobs_ready_cache', None) or
+                                 getattr(self, '_last_qt_result', None))
+                if not anchors:
+                    return False, "COBS Q(t) selected: add at least one Afρ anchor."
+                if not has_curve:
+                    return False, "COBS Q(t) selected: fetch/generate COBS Q(t) first."
+
+                t, q, source = self._usable_qt_sampling_arrays()
+                if t.size < 2 or q.size != t.size:
+                    coverage = getattr(self, '_qt_coverage', None)
+                    reason = (coverage.get('reason', '') if isinstance(coverage, dict) else '')
+                    return False, reason or "No usable calibrated COBS Q(t) curve is available."
+
+                lookback = max(0.0, float(self.obs_jd) - float(np.min(t)))
+                current_window = float(self.sp_max_age.value())
+                extra = max(0.0, current_window - lookback)
+                self._qt_run_extrapolation_days = extra
+                coverage = getattr(self, '_qt_coverage', None)
+                quality = coverage.get('quality', 'UNASSESSED') if isinstance(coverage, dict) else 'UNASSESSED'
+
+                if extra > 1.0:
+                    self._qt_run_coverage_warning = (
+                        f"Run available with COBS edge extrapolation: the oldest "
+                        f"{extra:.0f} d of the {current_window:.0f}-d release window "
+                        f"lie outside the available {lookback:.0f}-d Q(t) support.")
+                elif source == 'raw-qt-fallback':
+                    self._qt_run_coverage_warning = (
+                        "Run available from the calibrated COBS Q(t) curve. "
+                        "F-P/coverage guidance is unavailable, so automatic window "
+                        "Apply remains disabled.")
+                elif quality != 'RELIABLE':
+                    self._qt_run_coverage_warning = (
+                        f"Run available with {quality.lower()} COBS coverage; "
+                        "automatic window Apply remains disabled.")
+            # Manual table validation still happens in _run(); do not over-block here.
+            return True, ""
+        except Exception as exc:
+            return False, f"Q(t) input check failed: {exc}"
+
+    def _update_run_button_state(self):
+        """Enable Run MC only when the workflow is ready.
+
+        For hand-entered sessions (no loaded .mcin), require the user to visit
+        all three tabs once. Q(t) is now embedded in Simulation, so there is
+        no separate preview tab to confirm. Loaded input files are
+        treated as editable templates and can be run once their selected Q(t)
+        source is ready.
+        """
+        if not hasattr(self, 'btn_run'):
+            return
+        loaded = bool(getattr(self, '_loaded_input_path', None))
+        if not loaded:
+            missing = [i + 1 for i in range(3) if i not in getattr(self, '_visited_tabs', {0})]
+            if missing:
+                self.btn_run.setEnabled(False)
+                if hasattr(self, 'lbl_status'):
+                    self.lbl_status.setText(
+                        "Review all tabs before running MC. Missing tab(s): " +
+                        ", ".join(map(str, missing)))
+                return
+
+        qt_ready, reason = self._qt_source_ready_for_run()
+        if not qt_ready:
+            self.btn_run.setEnabled(False)
+            if hasattr(self, 'lbl_status'):
+                self.lbl_status.setText(reason)
+            return
+        self.btn_run.setEnabled(True)
+        warning = getattr(self, '_qt_run_coverage_warning', '')
+        if warning and hasattr(self, 'lbl_status'):
+            self.lbl_status.setText(warning)
+
+    def _on_mc_tab_changed(self, index: int):
+        self._visited_tabs.add(int(index))
+        # Q(t) lives inside Simulation (tab index 1). Refresh opportunistically
+        # when that tab is opened and a non-steady source is selected.
+        if index == 1 and (self.rad_dmdt_cobs.isChecked() or
+                           self.rad_dmdt_manual.isChecked()):
+            QTimer.singleShot(0, self._refresh_qt_plot)
+        self._update_run_button_state()
+
+    def _refresh_qt_plot(self):
+        """Safe Q(t) preview refresh wrapper.
+
+        Qt signal handlers should not allow uncaught exceptions to escape.
+        In some PyQt/Python builds an exception raised while switching tabs can
+        terminate the dialog or the whole application.  Keep the Monte Carlo
+        window alive and show the error inside the Q(t) panel instead.
+        """
+        try:
+            return self._refresh_qt_plot_impl()
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc(limit=6)
+            msg = f"Q(t) preview error: {exc}"
+
+            # Reset the suggestion state so the Apply button cannot use stale
+            # values from an earlier successful refresh.
+            self._qt_suggested_window = None
+            self._qt_suggested_window_range = None
+            self._qt_suggested_window_note = ""
+            self._qt_qonly_window = None
+            self._qt_fp_adjustment = ""
+            self._qt_coverage = None
+            self._qt_recommendation_quality = ""
+            self._qt_provisional_window = None
+            if hasattr(self, 'btn_apply_qt_suggested_window'):
+                self.btn_apply_qt_suggested_window.setEnabled(False)
+            if hasattr(self, 'btn_step2_apply_qt_suggested_window'):
+                self.btn_step2_apply_qt_suggested_window.setEnabled(False)
+            if hasattr(self, '_update_qt_suggestion_summary_labels'):
+                self._update_qt_suggestion_summary_labels()
+
+            # Draw an in-panel diagnostic instead of letting the window close.
+            try:
+                fig = self._qt_fig
+                fig.clear()
+                ax = fig.add_subplot(111)
+                ax.set_facecolor('#1a1a1a')
+                ax.text(0.5, 0.56, 'Q(t) preview could not be drawn',
+                        transform=ax.transAxes, ha='center', va='center',
+                        color='#ffb020', fontsize=10, fontweight='bold')
+                ax.text(0.5, 0.43, str(exc),
+                        transform=ax.transAxes, ha='center', va='center',
+                        color='#cccccc', fontsize=8, wrap=True)
+                ax.set_xticks([]); ax.set_yticks([])
+                for spine in ax.spines.values():
+                    spine.set_color('#444')
+                self._qt_canvas.draw()
+            except Exception:
+                pass
+
+            if hasattr(self, '_qt_info_lbl'):
+                self._qt_info_lbl.setText(msg + "\n\n" + tb)
+            if hasattr(self, 'lbl_status'):
+                self.lbl_status.setText(msg)
+            return None
+
+    def _refresh_qt_plot_impl(self):
+        """Re-draw the Q(t) preview using the SAME Q(t) logic as the MC run.
+
+        Important: this plot is deliberately tied to estimate_qt_from_lightcurve()
+        / manual dM/dt parsing rather than an independent magnitude-to-Afρ
+        shortcut.  The preview should show the release-time weights that the
+        Monte Carlo sampler will actually use.
+        """
+        import numpy as np
+        fig = self._qt_fig
+        fig.clear()
+        ax = fig.add_subplot(111)
+        T_colors = dict(text='#e0e0e0', text_muted='#888', grid='#333',
+                        cobs='#4a8adf', anchor='#ffe030', window='#ff3399',
+                        qw='#60e0a0', warn='#ffb020', fp='#c084ff',
+                        fp_band='#8b5cf6')
+
+        window_d = float(self.sp_max_age.value())
+        self._qt_suggested_window = None
+        self._qt_suggested_window_range = None
+        self._qt_suggested_window_note = ""
+        self._qt_qonly_window = None
+        self._qt_fp_adjustment = ""
+        self._qt_coverage = None
+        self._qt_recommendation_quality = ""
+        self._qt_provisional_window = None
+        if hasattr(self, 'btn_apply_qt_suggested_window'):
+            self.btn_apply_qt_suggested_window.setEnabled(False)
+        if hasattr(self, 'btn_step2_apply_qt_suggested_window'):
+            self.btn_step2_apply_qt_suggested_window.setEnabled(False)
+        self._update_qt_suggestion_summary_labels()
+
+        # Automatic F-P morphology guidance: one optional dominant age
+        # plus a maximum age derived from the largest listed synchrone.
+        fp_dom = float(getattr(self, 'fp_dominant_age', 0.0) or 0.0)
+        fp_outer = float(getattr(self, 'fp_max_age', 0.0) or 0.0)
+        use_fp_age = fp_outer > 0.0
+        if use_fp_age and fp_dom > fp_outer:
+            fp_dom = fp_outer
+
+        info_parts = []
+        has_data = False
+
+        def _weighted_age_stats(t_jd, q_w, obs_jd, t_min=None, t_max=None):
+            """Stats for a Q(t) curve, integrated on a uniform time grid.
+
+            The COBS sampling cadence is highly non-uniform.  Using raw point
+            sums would overweight nights with many reports.  This function
+            mirrors the MC sampler's behaviour: interpolate Q(t) onto a uniform
+            grid, then compute age statistics from that continuous curve.
+            """
+            t_jd = np.asarray(t_jd, dtype=float)
+            q_w  = np.asarray(q_w, dtype=float)
+            m = np.isfinite(t_jd) & np.isfinite(q_w) & (q_w > 0)
+            if m.sum() < 2:
+                return None
+            t = t_jd[m]
+            q = q_w[m]
+            order = np.argsort(t)
+            t = t[order]
+            q = q[order]
+            if t_min is None:
+                t_min = max(float(t[0]), obs_jd - window_d)
+            if t_max is None:
+                t_max = min(float(t[-1]), obs_jd)
+            t_min = float(t_min); t_max = float(t_max)
+            if not (t_min < t_max):
+                return None
+            fine_t = np.linspace(t_min, t_max, 2000)
+            fine_q = np.clip(np.interp(fine_t, t, q), 0.0, None)
+            if fine_q.sum() <= 0:
+                return None
+            ages = obs_jd - fine_t
+            # Sort by age ascending: 0 d/recent → older dust.
+            s = np.argsort(ages)
+            ages_s = ages[s]
+            q_s = fine_q[s]
+            cum = np.cumsum(q_s)
+            cum = cum / cum[-1]
+            mean_age = float(np.sum(ages_s * q_s) / np.sum(q_s))
+            def qtile(frac):
+                return float(np.interp(frac, cum, ages_s))
+            return dict(mean=mean_age,
+                        w50=qtile(0.50), w80=qtile(0.80),
+                        w90=qtile(0.90), w95=qtile(0.95),
+                        total=float(np.trapezoid(fine_q, fine_t)),
+                        t_min=t_min, t_max=t_max)
+
+        def _plot_q_curve(t_jd, q_w, label, source_kind='Q(t)'):
+            nonlocal has_data
+            t_jd = np.asarray(t_jd, dtype=float)
+            q_w  = np.asarray(q_w, dtype=float)
+            m = np.isfinite(t_jd) & np.isfinite(q_w) & (q_w > 0)
+            if m.sum() < 2:
+                return None
+            t = t_jd[m]
+            q = q_w[m]
+            order = np.argsort(t)
+            t = t[order]
+            q = q[order]
+            dt = t - self.obs_jd
+            q_norm = q / np.nanmax(q)
+            q_norm = np.clip(q_norm, 1e-6, None)
+            ax.plot(dt, q_norm, color=T_colors['cobs'], lw=1.7,
+                    label=label, zorder=3)
+            ax.scatter(dt, q_norm, s=8, alpha=0.35,
+                       color=T_colors['cobs'], zorder=2)
+            has_data = True
+            return dict(t=t, q=q, dt=dt, q_norm=q_norm, source=source_kind)
+
+        # ── Select Q(t) source: COBS, manual table, or steady ─────────────
+        q_plot = None
+        if self.rad_dmdt_cobs.isChecked():
+            anchors = self._read_anchor_table()
+            if not self._cobs_obs_list:
+                info_parts.append(
+                    "COBS Q(t) mode selected, but no COBS light curve is loaded. "
+                    "Fetch COBS data first.")
+            elif not anchors:
+                info_parts.append(
+                    "COBS Q(t) mode selected, but no Afρ anchor is entered. "
+                    "At least one anchor is required to calibrate the proxy curve.")
+            else:
+                try:
+                    import comet_tail_analyzer as cta
+                    qt_result = cta.estimate_qt_from_lightcurve(
+                        self.comet_el, self._cobs_obs_list, anchors,
+                        p_v=float(self.sp_pv.value()),
+                        smooth_window_days=float(self.sp_qt_smooth.value()))
+                    self._last_qt_result = qt_result
+                    q_plot = _plot_q_curve(qt_result['t_jd'], qt_result['Q_kg_s'],
+                                           'All COBS-derived Q(t) points',
+                                           source_kind='COBS')
+
+                    # Coverage/inference safety gate.  The recommendation uses
+                    # only the most recent continuous segment inside the F-P
+                    # maximum-age interval; older disconnected apparitions are
+                    # plotted for context but never integrated into the result.
+                    coverage = cta.assess_qt_coverage(
+                        qt_result['t_jd'], qt_result['Q_kg_s'], self.obs_jd,
+                        max_age_days=fp_outer,
+                        dominant_age_days=fp_dom,
+                        smooth_window_days=float(self.sp_qt_smooth.value()))
+                    self._qt_coverage = coverage
+                    self._qt_recommendation_quality = coverage.get('quality', '')
+
+                    if q_plot is not None:
+                        # Mark the accepted recent segment with a heavier line.
+                        seg_t = np.asarray(coverage.get('segment_t_jd', []), dtype=float)
+                        seg_q = np.asarray(coverage.get('segment_q', []), dtype=float)
+                        if seg_t.size >= 2 and seg_q.size == seg_t.size:
+                            norm = max(float(np.nanmax(q_plot['q'])), 1e-30)
+                            seg_y = np.clip(seg_q / norm, 1e-6, None)
+                            quality_color = (T_colors['qw'] if coverage.get('quality') == 'RELIABLE'
+                                             else T_colors['warn'])
+                            ax.plot(seg_t - self.obs_jd, seg_y,
+                                    color=quality_color, lw=3.0, alpha=0.95,
+                                    label=(f"Recent continuous COBS segment "
+                                           f"({coverage.get('quality','')})"), zorder=5)
+
+                        # Mark anchor dates.  Anchor values are Afρ labels, not
+                        # independent Q(t) y-values.
+                        for jd_a, af_a in zip(qt_result['anchor_jd'],
+                                              qt_result['anchor_afrho']):
+                            y_a = np.interp(jd_a, q_plot['t'], q_plot['q_norm'])
+                            ax.scatter([jd_a - self.obs_jd], [y_a],
+                                       s=80, marker='*', color=T_colors['anchor'],
+                                       zorder=6, label='Afρ anchor' if jd_a == qt_result['anchor_jd'][0] else None)
+                            ax.annotate(f'{af_a:.0f} cm',
+                                        (jd_a - self.obs_jd, y_a),
+                                        textcoords='offset points', xytext=(5, 5),
+                                        fontsize=7, color=T_colors['anchor'])
+
+                    info_parts.append(
+                        "Q(t) source: COBS light curve scaled by your Afρ anchor(s).")
+                    info_parts.append(
+                        f"COBS coverage: {coverage.get('quality','INSUFFICIENT')} | "
+                        f"recent lookback={coverage.get('reliable_lookback_days',0.0):.0f} d | "
+                        f"coverage={100.0*coverage.get('coverage_fraction',0.0):.0f}% | "
+                        f"unique dates={coverage.get('unique_points',0)} | "
+                        f"largest accepted gap={coverage.get('largest_gap_days',0.0):.1f} d.")
+                    info_parts.append(coverage.get('reason', ''))
+                except Exception as exc:
+                    info_parts.append(f"Q(t) estimation error: {exc}")
+
+        elif self.rad_dmdt_manual.isChecked():
+            try:
+                import comet_tail_analyzer as cta
+                days_arr, dmdt_arr = self._read_dmdt_manual_table()
+                per_jd = self.comet_el.get('T_jd') or cta.date_to_jd(self.comet_el['T'])
+                t_jd = per_jd + np.asarray(days_arr, dtype=float)
+                q_plot = _plot_q_curve(t_jd, np.asarray(dmdt_arr, dtype=float),
+                                       'Manual dM/dt table', source_kind='manual')
+                info_parts.append("Q(t) source: manual dM/dt table.")
+            except Exception as exc:
+                info_parts.append(f"Manual dM/dt table error: {exc}")
+
+        else:
+            # Steady mode: show the distribution actually implied by the MC
+            # age sampler, but do not pretend there is a photometric Q(t)
+            # recommendation.
+            t_jd = np.array([self.obs_jd - window_d, self.obs_jd], dtype=float)
+            q_w = np.array([1.0, 1.0], dtype=float)
+            q_plot = _plot_q_curve(t_jd, q_w, 'Steady Q(t) over MC window',
+                                   source_kind='steady')
+            info_parts.append(
+                "Q(t) source: steady/uniform. No light-curve-based release-window "
+                "suggestion is available in this mode.")
+
+        # ── MC release window shading ────────────────────────────────────
+        ax.axvspan(-window_d, 0, alpha=0.12, color=T_colors['window'],
+                   label=f'Current MC window ({window_d:.0f} d)')
+        ax.axvline(0, color='#888', lw=0.8, ls='--', alpha=0.6)
+        ax.text(0.985, 0.95, 'obs date', transform=ax.transAxes,
+                fontsize=7, color='#888', ha='right', va='top')
+
+        # ── Automatic F-P morphology-age overlay ────────────────────────
+        if use_fp_age:
+            if fp_dom > 0.0:
+                ax.axvline(-fp_dom, color=T_colors['fp_band'], lw=1.3, ls=':',
+                           alpha=0.95,
+                           label=f'F-P dominant dust age ({fp_dom:.0f} d)')
+            ax.axvline(-fp_outer, color=T_colors['fp'], lw=1.2, ls='--',
+                       alpha=0.95,
+                       label=f'F-P maximum dust age ({fp_outer:.0f} d)')
+            dom_desc = (f"dominant dust age ≈ {fp_dom:.0f} d; "
+                        if fp_dom > 0 else "")
+            info_parts.append(
+                f"F-P morphology guidance: {dom_desc}maximum dust age ≈ "
+                f"{fp_outer:.0f} d. The maximum age is derived from the largest "
+                f"synchrone and is used as the upper MC-window limit.")
+
+        # ── Q-weighted dust-age statistics + suggested window ────────────
+        if q_plot is not None and q_plot.get('source') != 'steady':
+            source_kind = q_plot.get('source')
+            recommendation_allowed = True
+
+            if source_kind == 'COBS':
+                coverage = getattr(self, '_qt_coverage', None)
+                if isinstance(coverage, dict):
+                    t = np.asarray(coverage.get('segment_t_jd', []), dtype=float)
+                    q = np.asarray(coverage.get('segment_q', []), dtype=float)
+                    recommendation_allowed = bool(
+                        coverage.get('recommendation_allowed', False))
+                else:
+                    t = np.array([], dtype=float)
+                    q = np.array([], dtype=float)
+                    recommendation_allowed = False
+            else:
+                # A manual table is explicit user input, not a heterogeneous
+                # archive.  It still obeys the F-P maximum-age interval.
+                t = np.asarray(q_plot['t'], dtype=float)
+                q = np.asarray(q_plot['q'], dtype=float)
+                if use_fp_age:
+                    m = ((t >= self.obs_jd - fp_outer) & (t <= self.obs_jd))
+                    t = t[m]; q = q[m]
+
+            stats_all = None
+            stats_win = None
+            if t.size >= 2 and q.size == t.size:
+                # No extrapolation for inference: integrate only between the
+                # first and last points of the accepted segment/table.
+                t_min = float(np.nanmin(t))
+                t_max = float(np.nanmax(t))
+                stats_all = _weighted_age_stats(
+                    t, q, self.obs_jd, t_min=t_min, t_max=t_max)
+                win_min = max(t_min, self.obs_jd - window_d)
+                win_max = min(t_max, self.obs_jd)
+                if win_min < win_max:
+                    stats_win = _weighted_age_stats(
+                        t, q, self.obs_jd, t_min=win_min, t_max=win_max)
+
+            if stats_all is not None:
+                mean_all = stats_all['mean']
+                stat_color = (T_colors['qw'] if recommendation_allowed
+                              else T_colors['warn'])
+                stat_prefix = '' if recommendation_allowed else 'provisional '
+                ax.axvline(-mean_all, color=stat_color, lw=1.5,
+                           ls=':', alpha=0.95,
+                           label=f'{stat_prefix}Q-weighted mean ({mean_all:.0f} d)')
+                ax.axvline(-stats_all['w80'], color=T_colors['warn'], lw=1.0,
+                           ls='--', alpha=0.8,
+                           label=f'{stat_prefix}80% cumulative Q ({stats_all["w80"]:.0f} d)')
+
+                # Q(t)-only candidate from the accepted support.  F-P then
+                # supplies a dominant-age floor and maximum-age cap.
+                q_lo  = max(1.3 * mean_all, stats_all['w50'])
+                q_mid = max(1.4 * mean_all, stats_all['w80'])
+                q_hi  = max(1.6 * mean_all, stats_all['w90'])
+                floor = fp_dom if fp_dom > 0.0 else 0.0
+                cap = fp_outer if use_fp_age else float('inf')
+                sug_lo  = min(cap, max(q_lo, floor))
+                sug_mid = min(cap, max(q_mid, floor))
+                sug_hi  = min(cap, max(q_hi, floor))
+                self._qt_qonly_window = float(q_mid)
+
+                if floor > 0 and q_mid < floor:
+                    self._qt_fp_adjustment = f"raised to dominant age {floor:.0f} d"
+                elif use_fp_age and q_mid > cap:
+                    self._qt_fp_adjustment = f"capped at maximum age {cap:.0f} d"
+                else:
+                    self._qt_fp_adjustment = "none required"
+
+                suggestion_rule = (
+                    "Q(t): max(1.3–1.6 × weighted mean, W50/W80/W90), "
+                    "computed only from supported dates; then apply the "
+                    "dominant-age floor and maximum-age cap")
+
+                if recommendation_allowed:
+                    span_lo = min(sug_lo, sug_hi)
+                    span_hi = max(sug_lo, sug_hi)
+                    if span_hi > span_lo:
+                        ax.axvspan(-span_hi, -span_lo,
+                                   color=T_colors['qw'], alpha=0.08,
+                                   label=(f'F-P+Q suggested {span_lo:.0f}–'
+                                          f'{span_hi:.0f} d'))
+                    ax.axvline(-sug_mid, color=T_colors['qw'], lw=1.2,
+                               ls='-', alpha=0.85,
+                               label=f'recommended MC window ({sug_mid:.0f} d)')
+                    self._qt_suggested_window = float(sug_mid)
+                    self._qt_suggested_window_range = (
+                        float(span_lo), float(span_hi))
+                    self._qt_suggested_window_note = (
+                        f"Suggested effective MC window ≈ {sug_mid:.0f} d. "
+                        f"Rule: {suggestion_rule}.")
+                    self._qt_recommendation_quality = "RELIABLE"
+                else:
+                    # A partial/insufficient segment can still be informative,
+                    # but must not be presented as an actionable result.
+                    self._qt_provisional_window = float(sug_mid)
+                    self._qt_suggested_window = None
+                    self._qt_suggested_window_range = None
+                    self._qt_suggested_window_note = (
+                        "Q(t) statistics are provisional because continuous "
+                        "COBS coverage is incomplete. Automatic Apply is disabled.")
+
+                info_parts.append(
+                    f"Q-weighted mean age: {mean_all:.1f} d | "
+                    f"Q-only candidate: {q_mid:.0f} d | "
+                    f"F-P-adjusted candidate: {sug_mid:.0f} d.")
+                info_parts.append(f"Suggestion rule: {suggestion_rule}.")
+                info_parts.append(
+                    f"Cumulative-Q age scales: W50={stats_all['w50']:.0f} d, "
+                    f"W80={stats_all['w80']:.0f} d, "
+                    f"W90={stats_all['w90']:.0f} d.")
+                if stats_win is not None:
+                    info_parts.append(
+                        f"Within supported dates inside the current {window_d:.0f} d "
+                        f"window: mean={stats_win['mean']:.1f} d, "
+                        f"W80={stats_win['w80']:.0f} d.")
+
+                assessment = ""
+                if recommendation_allowed:
+                    if use_fp_age and window_d > fp_outer:
+                        assessment = "Current value exceeds the F-P maximum dust age."
+                    elif abs(window_d - sug_mid) <= max(3.0, 0.15 * sug_mid):
+                        assessment = "Current value is close to the recommended window."
+                    elif window_d > sug_mid:
+                        assessment = "Current value is longer than the final recommendation."
+                    else:
+                        assessment = (
+                            "Current value is shorter than the final recommendation; "
+                            "older visible dust may be underrepresented.")
+                else:
+                    assessment = (
+                        "No automatic recommendation: the displayed statistics "
+                        "do not have sufficient continuous COBS support.")
+                self._update_qt_suggestion_summary_labels(assessment)
+                self._update_run_button_state()
+            elif source_kind == 'COBS':
+                self._qt_suggested_window_note = (
+                    "No valid recent continuous Q(t) segment is available for inference.")
+                self._update_qt_suggestion_summary_labels()
+                self._update_run_button_state()
+
+        # ── Axis styling ─────────────────────────────────────────────────
+        ax.set_facecolor('#1a1a1a')
+        for spine in ax.spines.values():
+            spine.set_color('#444')
+        ax.tick_params(colors='#aaa', labelsize=8)
+        ax.set_xlabel('Days from observation (negative = before)',
+                      color='#aaa', fontsize=8)
+        ax.set_ylabel('Relative Q(t)',
+                      color='#aaa', fontsize=8)
+        ax.set_title('Dust-release weighting Q(t)', color='#ccc', fontsize=9)
+        ax.grid(True, color=T_colors['grid'], lw=0.5, alpha=0.5)
+        if has_data:
+            ax.set_yscale('log')
+            ax.set_ylim(bottom=1e-4, top=1.8)
+            # Keep the diagnostic focused on the physically relevant F-P/MC
+            # interval.  Historical COBS apparitions outside this span may be
+            # present in memory, but should not compress the recent curve into
+            # a few pixels or imply that they contribute to the recommendation.
+            axis_lookback = max(window_d, fp_outer if use_fp_age else 0.0, 10.0)
+            ax.set_xlim(-1.05 * axis_lookback, max(3.0, 0.03 * axis_lookback))
+        handles, labels = ax.get_legend_handles_labels()
+        # Deduplicate repeated labels, especially anchor markers.
+        if handles:
+            seen = set(); h2 = []; l2 = []
+            for h, l in zip(handles, labels):
+                if not l or l in seen:
+                    continue
+                seen.add(l); h2.append(h); l2.append(l)
+            ax.legend(h2, l2, fontsize=7, facecolor='#222', edgecolor='#444',
+                      labelcolor='#ccc', loc='upper left')
+
+        if not has_data:
+            ax.text(0.5, 0.5,
+                    'No Q(t) curve available.\nFetch COBS + enter Afρ anchor,\nor use a manual dM/dt table.',
+                    transform=ax.transAxes, ha='center', va='center',
+                    color='#666', fontsize=9)
+
+        fig.tight_layout(pad=0.8)
+        self._qt_canvas.draw()
+        self._qt_info_lbl.setText('\n'.join(info_parts) if info_parts else
+                                   "No Q(t) statistics available.")
+
+    def _apply_qt_suggested_window(self):
+        """Apply the latest Q(t)/F-P suggested effective MC release window."""
+        val = getattr(self, '_qt_suggested_window', None)
+        if val is None:
+            QMessageBox.information(
+                self, "Apply suggested window",
+                "No suggestion is available yet. Refresh the Q(t) plot first.")
+            return
+        try:
+            val = float(val)
+            self.sp_max_age.setValue(max(self.sp_max_age.minimum(),
+                                         min(self.sp_max_age.maximum(), val)))
+            note = getattr(self, '_qt_suggested_window_note', '')
+            self.lbl_status.setText(note or f"Applied suggested MC window: {val:.0f} d")
+            self._refresh_qt_plot()
+            self._update_qt_suggestion_summary_labels()
+            # Applying a suggestion changes only the Release-window value.
+            # Keep the user on the current tab; manual workflows still require
+            # the user to review every tab explicitly before Run is enabled.
+            # Also make sure Run never becomes the dialog's default button.
+            if hasattr(self, 'btn_run'):
+                self.btn_run.setAutoDefault(False)
+                self.btn_run.setDefault(False)
+            self._update_run_button_state()
+        except Exception as exc:
+            QMessageBox.warning(self, "Apply suggested window", f"Could not apply:\n{exc}")
+
+    def _reset_to_defaults(self):
+        self._apply_state(self._default_state)
+        self.lbl_status.setText("Fields reset to defaults.")
+
+    def closeEvent(self, event):
+        """Remember field values for next time this window is opened —
+        a plain class attribute (not instance), since each open/close
+        creates a brand-new MCWindow (WA_DeleteOnClose) that would
+        otherwise lose everything typed in if the window is closed by
+        accident before clicking Run."""
+        MCWindow._saved_state = self._collect_state()
+        super().closeEvent(event)
+
+    def _collect_state(self) -> dict:
+        """Generic snapshot of every input widget on this window, keyed
+        by its self.xxx attribute name. Generic (rather than a hand-
+        written field list) so newly added inputs are picked up for
+        free and nothing gets silently missed."""
+        state = {}
+        for name, w in vars(self).items():
+            if isinstance(w, QDoubleSpinBox):
+                state[name] = ("dspin", w.value())
+            elif isinstance(w, QSpinBox):
+                state[name] = ("spin", w.value())
+            elif isinstance(w, QCheckBox):
+                state[name] = ("check", w.isChecked())
+            elif isinstance(w, QRadioButton):
+                state[name] = ("radio", w.isChecked())
+            elif isinstance(w, QComboBox):
+                state[name] = ("combo", w.currentIndex())
+            elif isinstance(w, QLineEdit):
+                state[name] = ("line", w.text())
+            elif isinstance(w, QSlider):
+                state[name] = ("slider", w.value())
+            elif isinstance(w, QTableWidget):
+                rows = []
+                for r in range(w.rowCount()):
+                    rows.append([
+                        (w.item(r, c).text() if w.item(r, c) else "")
+                        for c in range(w.columnCount())
+                    ])
+                state[name] = ("table", rows)
+        return state
+
+    def _apply_state(self, state: dict):
+        """Inverse of _collect_state(). Silently skips any widget no
+        longer present (e.g. after a future edit) instead of raising."""
+        for name, (kind, val) in state.items():
+            w = getattr(self, name, None)
+            if w is None:
+                continue
+            if kind in ("dspin", "spin"):
+                w.setValue(val)
+            elif kind in ("check", "radio"):
+                w.setChecked(val)
+            elif kind == "combo":
+                w.setCurrentIndex(val)
+            elif kind == "line":
+                w.setText(val)
+            elif kind == "slider":
+                w.setValue(val)
+            elif kind == "table":
+                # Keep Afρ anchor entry user-friendly after loading older or
+                # sparse templates: always show at least three editable rows.
+                min_rows = 3 if name == "tbl_anchors" else len(val)
+                w.setRowCount(max(min_rows, len(val)))
+                for r, row in enumerate(val):
+                    for c, text in enumerate(row):
+                        w.setItem(r, c, QTableWidgetItem(text))
+                if name == "tbl_anchors":
+                    for r in range(len(val), w.rowCount()):
+                        for c in range(w.columnCount()):
+                            if w.item(r, c) is None:
+                                w.setItem(r, c, QTableWidgetItem(""))
+
+    def _save_input_file(self):
+        """Save the current visible MC inputs as a NEW .mcin JSON file.
+
+        This deliberately supports an edit-before-run workflow:
+
+            Load .mcin  →  edit any GUI field  →  Save inputs as…  →  Run MC
+
+        Loading a file never locks the controls and saving never depends on
+        whether MC has already been run.  The saved file contains the current
+        visible state at the moment the user clicks Save.
+        """
+        import json, os, re
+        from datetime import datetime, timezone
+
+        def _slug(text, fallback="MC_input"):
+            text = (text or fallback).strip()
+            text = re.sub(r"[^A-Za-z0-9_.-]+", "_", text)
+            text = text.strip("_")
+            return text or fallback
+
+        comet_name = self.comet_el.get("name", "") or "comet"
+        obs_date = cta.jd_to_str(self.obs_jd)[:10]
+
+        loaded_profile = getattr(self, "_loaded_input_profile", {}) or {}
+        loaded_name = loaded_profile.get("name", "") if isinstance(loaded_profile, dict) else ""
+        loaded_path = getattr(self, "_loaded_input_path", None)
+        loaded_base = os.path.basename(loaded_path) if loaded_path else ""
+
+        if loaded_name:
+            default_name = _slug(loaded_name + "_edited") + ".mcin"
+            profile_name = "Edited copy — " + loaded_name
+        elif loaded_base:
+            root, _ext = os.path.splitext(loaded_base)
+            default_name = _slug(root + "_edited") + ".mcin"
+            profile_name = f"Edited copy — {root}"
+        else:
+            default_name = f"MC_{comet_name.replace(' ','_').replace('/','')}_{obs_date}.mcin"
+            profile_name = f"User saved MC input — {comet_name} {obs_date}"
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save edited MC input as", default_name,
+            "CTA MC input (*.mcin);;JSON file (*.json);;All files (*)")
+        if not path:
+            return
+        if not (path.lower().endswith(".mcin") or path.lower().endswith(".json")):
+            path += ".mcin"
+
+        notes = [
+            "All model choices are stored as visible GUI inputs.",
+            "This file does not activate any hidden object-specific model.",
+            "This file can be loaded later, edited again, and saved as another input file."
+        ]
+        if loaded_base:
+            notes.append(f"Created from editable input template: {loaded_base}")
+
+        profile = {
+            "name": profile_name,
+            "target": comet_name,
+            "observation_date_utc": obs_date,
+            "mode": "editable CTA MC input",
+            "intended_use": "Monte Carlo morphology / surface-brightness configuration",
+            "created_by": "Comet Tail Analyzer",
+            "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "notes": notes,
+        }
+        if loaded_base:
+            profile["parent_input_file"] = loaded_base
+        if loaded_profile and isinstance(loaded_profile, dict):
+            profile["parent_profile_name"] = loaded_profile.get("name", "")
+
+        payload = {
+            "schema": "CTA_MC_INPUT",
+            "profile": profile,
+            "comet": comet_name,
+            "obs_jd": self.obs_jd,
+            "fp_guidance": {
+                "synchrone_ages_days": list(getattr(self, "fp_sync_ages", [])),
+                "dominant_dust_age_days": float(getattr(self, "fp_dominant_age", 0.0) or 0.0),
+                "maximum_dust_age_days": float(getattr(self, "fp_max_age", 0.0) or 0.0),
+            },
+            "state": self._collect_state(),
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+            # Treat the new file as the current editable template from now on.
+            self._loaded_input_path = path
+            self._loaded_input_profile = profile
+            self._loaded_input_comet = comet_name
+            self.lbl_status.setText(
+                f"Edited inputs saved → {path}. You can continue editing or run MC.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Save inputs", f"Could not save:\n{exc}")
+
+    def _load_input_file(self):
+        """Load a CTA .mcin input file.
+
+        Supports CTA_MC_INPUT schema files only.
+
+        Loading a file restores visible inputs only. It does not run MC, does
+        not lock the controls, and does not switch to a hidden model. The user
+        may edit any field after loading and save the edited state as a new
+        .mcin file. Files without schema='CTA_MC_INPUT' are rejected to avoid
+        ambiguous behaviour.
+        """
+        import json
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load MC input file", "",
+            "CTA MC input (*.mcin *.json);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception as exc:
+            QMessageBox.warning(self, "Load inputs", f"Could not read file:\n{exc}")
+            return
+
+        schema = payload.get("schema", "")
+        if schema != "CTA_MC_INPUT":
+            QMessageBox.warning(
+                self, "Load inputs",
+                "Unsupported CTA input file.\n\n"
+                "This build accepts only files with schema='CTA_MC_INPUT'.")
+            return
+
+        profile = payload.get("profile", {}) if isinstance(payload.get("profile", {}), dict) else {}
+        saved_comet = payload.get("comet", "") or profile.get("target", "")
+        this_comet  = self.comet_el.get("name", "")
+        profile_name = profile.get("name", "")
+        intended_use = profile.get("intended_use", "")
+        notes = profile.get("notes", [])
+
+        if saved_comet and this_comet and saved_comet != this_comet:
+            from PyQt6.QtWidgets import QMessageBox as _MB
+            msg = (
+                f"This input file was saved for <b>{saved_comet}</b>, but the\n"
+                f"current comet is <b>{this_comet}</b>.\n\n"
+            )
+            if profile_name:
+                msg += f"Profile: {profile_name}\n"
+            if intended_use:
+                msg += f"Use: {intended_use}\n"
+            msg += "\nLoad anyway?"
+            ans = _MB.question(
+                self, "Load inputs — comet mismatch", msg,
+                _MB.StandardButton.Yes | _MB.StandardButton.Cancel)
+            if ans != _MB.StandardButton.Yes:
+                return
+
+        fp_guidance = payload.get("fp_guidance", {})
+        if isinstance(fp_guidance, dict):
+            ages_saved = fp_guidance.get("synchrone_ages_days", [])
+            dom_saved = fp_guidance.get("dominant_dust_age_days", 0.0)
+            try:
+                self.update_fp_guidance(ages_saved, dom_saved)
+            except Exception:
+                pass
+
+        state = payload.get("state", {})
+        if not isinstance(state, dict):
+            QMessageBox.warning(self, "Load inputs", "This file has no valid 'state' object.")
+            return
+        self._apply_state(state)
+        self._smooth_au_initialized = True
+        self._loaded_input_path = path
+        self._loaded_input_profile = profile
+        self._loaded_input_comet = saved_comet or this_comet
+
+        suffix = ""
+        if profile_name:
+            suffix += f"  [{profile_name}]"
+        elif saved_comet and saved_comet != this_comet:
+            suffix += f"  [saved for {saved_comet}]"
+        if notes:
+            suffix += "  [notes in file]"
+        self.lbl_status.setText(
+            f"Loaded editable inputs from {path}" + suffix +
+            " — edit any field, then Run MC or Save inputs as a new .mcin file.")
+        # Loaded .mcin files are editable templates; no need to force the
+        # four-tab manual review requirement.
+        self._visited_tabs = {0, 1, 2}
+
+        # Loading a file should never trigger MC generation.  It only restores
+        # visible values.  If the restored template uses COBS+Afρ Q(t), fetch
+        # COBS automatically so the user can edit parameters and run MC without
+        # first visiting the Q(t) tab manually.
+        if self.rad_dmdt_cobs.isChecked():
+            self._auto_prepare_qt_after_input_load()
+        else:
+            try:
+                self._refresh_qt_plot()
+            except Exception:
+                pass
+
+    def _auto_prepare_qt_after_input_load(self):
+        """After loading an editable .mcin template, automatically prepare
+        COBS-based Q(t) if that source is selected.
+
+        This deliberately does NOT run MC and does NOT overwrite the loaded
+        release window.  It only populates _cobs_obs_list, updates the COBS
+        status label, and redraws the Q(t) preview/suggestion so the loaded
+        template is ready for review and editing.
+        """
+        if self.main_window is None:
+            try:
+                self._refresh_qt_plot()
+            except Exception:
+                pass
+            return
+
+        anchors = []
+        try:
+            anchors = self._read_anchor_table()
+        except Exception:
+            anchors = []
+
+        self._cobs_obs_list = None
+        self.btn_fetch_cobs.setEnabled(False)
+        if hasattr(self, 'lbl_cobs_status'):
+            self.lbl_cobs_status.setText("Auto-fetching COBS for loaded input…")
+        self.lbl_status.setText(
+            "Loaded editable inputs. Auto-fetching COBS light curve for Q(t)…")
+
+        def _on_cobs_ready(cobs_data):
+            self.btn_fetch_cobs.setEnabled(True)
+            if not cobs_data or not cobs_data.get("obs_list"):
+                self._cobs_obs_list = None
+                self._cobs_ready_cache = None
+                self._pending_run_after_cobs = False
+                if hasattr(self, 'lbl_cobs_status'):
+                    self.lbl_cobs_status.setText(
+                        "COBS auto-fetch failed or no usable observations. "
+                        "You can edit inputs, retry Fetch COBS, or choose another Q(t) source.")
+                self.lbl_status.setText(
+                    "Loaded editable inputs, but COBS Q(t) is not ready. "
+                    "Retry Fetch COBS before running a COBS-weighted MC model.")
+                try:
+                    self._refresh_qt_plot()
+                except Exception:
+                    pass
+                return
+
+            self._cobs_obs_list = cobs_data["obs_list"]
+            self._cobs_ready_cache = list(self._cobs_obs_list)
+            counts = cta.summarize_obs_methods(self._cobs_obs_list)
+            method_str = ", ".join(
+                f"{name or key}×{n}" for key, (n, name) in list(counts.items())[:4]
+            ) if counts else "method info n/a"
+            if hasattr(self, 'lbl_cobs_status'):
+                self.lbl_cobs_status.setText(
+                    f"Ready — {len(self._cobs_obs_list)} COBS points "
+                    f"(source: {cobs_data.get('source','?')}). "
+                    f"Methods: {method_str}")
+
+            if anchors:
+                self.lbl_status.setText(
+                    f"Loaded editable inputs; Q(t) ready from COBS + "
+                    f"{len(anchors)} Afρ anchor(s). Edit any field or Run MC.")
+            else:
+                self.lbl_status.setText(
+                    "Loaded editable inputs; COBS fetched, but no valid Afρ "
+                    "anchor was found. Add an anchor before COBS-weighted MC.")
+
+            try:
+                self._refresh_qt_plot()
+            except Exception:
+                pass
+            self._update_run_button_state()
+
+            # If the user clicked Run MC while COBS was not yet cached, run
+            # automatically once the auto-fetch finishes.  This keeps the
+            # Load → Edit → Run workflow one-click, without requiring the user
+            # to refresh the embedded Q(t) preview or press Run a second time.
+            if getattr(self, '_pending_run_after_cobs', False):
+                self._pending_run_after_cobs = False
+                QTimer.singleShot(0, self._run)
+
+        self.main_window._ensure_cobs_fetched(_on_cobs_ready)
+
+    def _load_tycho_photometry(self):
+        """Open a Tycho Tracker ICQ-format .txt export, parse its Afρ
+        summary and radius-vs-magnitude profile table, and auto-fill
+        Observed Afρ + Faintest/Brightest level fields.
+
+        Falls back gracefully: on any parse failure, or if the user
+        cancels the file dialog, existing field values are left exactly
+        as they were — this is a convenience auto-fill, not a required
+        step, so failure here should never block the rest of the
+        workflow."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Tycho Tracker photometry file", "",
+            "Text file (*.txt);;All files (*)")
+        if not path:
+            return
+        try:
+            data = cta.parse_tycho_photometry_file(path)
+        except Exception as exc:
+            self.lbl_tycho_status.setText(f"⚠ Could not parse file: {exc}")
+            self.lbl_tycho_status.setStyleSheet("color:#ff9955; font-size:9px;")
+            return
+
+        try:
+            sb = cta.suggest_sb_contour_levels(
+                data['radii_arcsec'], data['cumulative_mag'])
+        except Exception as exc:
+            self.lbl_tycho_status.setText(
+                f"⚠ Parsed Afρ table OK but could not derive surface "
+                f"brightness levels: {exc}")
+            self.lbl_tycho_status.setStyleSheet("color:#ff9955; font-size:9px;")
+            # Still fill in what we DID get (Afρ) even if the SB-level
+            # calculation failed — partial success is still useful.
+            if data.get('afrho_cm'):
+                self.sp_afrho_cal.setValue(data['afrho_cm'])
+                self.lbl_afrho_source.setText(
+                    f"from Tycho file ({data.get('obs_date','?')})")
+                self.lbl_afrho_source.setStyleSheet("color:#60e0a0; font-size:9px;")
+            return
+
+        # Clamp to the spinboxes' own [10, 35] range so an unusually
+        # bright/faint comet can't silently push a value out of range
+        # (setValue() would clamp anyway, but this keeps the displayed
+        # numbers matching what was actually derived, for the status line).
+        faint  = max(10.0, min(35.0, sb['suggested_faint']))
+        bright = max(10.0, min(35.0, sb['suggested_bright']))
+        self.sp_mag_faint.setValue(faint)
+        self.sp_mag_bright.setValue(bright)
+
+        if data.get('afrho_cm'):
+            self.sp_afrho_cal.setValue(data['afrho_cm'])
+            self.lbl_afrho_source.setText(
+                f"from Tycho file ({data.get('obs_date','?')})")
+            self.lbl_afrho_source.setStyleSheet("color:#60e0a0; font-size:9px;")
+
+        n_pts = len(data['radii_arcsec'])
+        self.lbl_tycho_status.setText(
+            f"✓ Loaded {n_pts} radius points from "
+            f"{data.get('mpc_code','?')} — "
+            f"measured SB range {sb['sb_brightest_raw']:.1f}–"
+            f"{sb['sb_faintest_raw']:.1f} mag/arcsec², "
+            f"suggested levels applied with 0.3 mag margin.")
+        self.lbl_tycho_status.setStyleSheet("color:#60e0a0; font-size:9px;")
+
+    def _autofill_afrho(self):
+        """Auto-populate sp_afrho_cal from the COBS anchor table when
+        the source is COBS and at least one anchor date is close to the
+        observation JD. Falls back to the main Analysis panel's last
+        computed Afρ if available, otherwise leaves the field for the
+        user to fill manually."""
+        best_afrho = None
+        best_label = None
+
+        # ── Priority 1: COBS anchor table row closest to obs_jd ─────────
+        if self.rad_dmdt_cobs.isChecked():
+            best_dt = None
+            for r in range(self.tbl_anchors.rowCount()):
+                d_item = self.tbl_anchors.item(r, 0)
+                v_item = self.tbl_anchors.item(r, 1)
+                if not (d_item and v_item):
+                    continue
+                try:
+                    t_jd  = cta.date_to_jd(d_item.text().strip())
+                    afrho = float(v_item.text().strip())
+                    dt    = abs(t_jd - self.obs_jd)
+                    if best_dt is None or dt < best_dt:
+                        best_dt    = dt
+                        best_afrho = afrho
+                        days_diff  = (t_jd - self.obs_jd)
+                        best_label = (f"from COBS anchor {d_item.text().strip()} "
+                                      f"({'obs date' if abs(days_diff)<0.6 else f'{days_diff:+.0f}d from obs'})")
+                except Exception:
+                    continue
+
+        # ── Priority 2: main-window Analysis panel last Afρ value ───────
+        if best_afrho is None and self.main_window is not None:
+            try:
+                afrho_analysis = self.main_window.last_afrho_cm
+                if afrho_analysis and afrho_analysis > 0:
+                    best_afrho = afrho_analysis
+                    best_label = "from Analysis panel"
+            except AttributeError:
+                pass
+
+        if best_afrho is not None:
+            self.sp_afrho_cal.setValue(best_afrho)
+            self.lbl_afrho_source.setText(best_label)
+            self.lbl_afrho_source.setStyleSheet("color:#60e0a0; font-size:9px;")
+        else:
+            self.lbl_afrho_source.setText("enter manually (no anchor found)")
+            self.lbl_afrho_source.setStyleSheet("color:#ff9955; font-size:9px;")
+
+    @staticmethod
+    def _rline(label: str, value: str, width: int = 28) -> str:
+        """One aligned 'label value' report line — single column-width
+        helper so every section lines up the same way without each call
+        site hand-padding its own f-string (v3.1 report redesign)."""
+        return f"{label:<{width}}{value}"
+
+    def _build_report_lines(self) -> list[str]:
+        """Build a compact, publication-style Monte Carlo model report.
+
+        v3.1 report format: short section blocks intended for sharing in
+        project notes, Facebook technical captions, and manuscript support
+        material.  The report deliberately stays input-transparent: it lists
+        the values actually visible in the GUI rather than applying any hidden
+        object-specific preset.
+        """
+        import math
+
+        R = self._rline
+        lines = []
+        dash = "-" * 60
+
+        def _fmt_um(x: float) -> str:
+            try:
+                xf = float(x)
+                if abs(xf - round(xf)) < 1e-6:
+                    return f"{int(round(xf)):,}"
+                return f"{xf:,.5g}"
+            except Exception:
+                return str(x)
+
+        def _fmt_beta(x: float) -> str:
+            try:
+                xf = float(x)
+                return f"{xf:.3g}" if abs(xf) < 1e-3 else f"{xf:.4g}"
+            except Exception:
+                return str(x)
+
+        def _phase_law_label() -> str:
+            idx = self.cmb_phase_law.currentIndex() if hasattr(self, 'cmb_phase_law') else 0
+            if idx == 1:
+                return "Linear–exponential custom [frame-wide scalar]"
+            if idx == 2:
+                return "None / relative morphology only"
+            return "Schleicher composite dust phase function [frame-wide scalar]"
+
+        # ── Header / observation context ─────────────────────────────────
+        lines.append("Monte Carlo model report")
+        lines.append(dash)
+        lines.append(R("Comet:", self.comet_el.get('name', '?')))
+        lines.append(R("Observation date (UT):", cta.jd_to_str(self.obs_jd)))
+
+        r_h = None
+        try:
+            r_C, _ = cta.elem_to_state(self.comet_el, self.obs_jd)
+            r_h = float(cta.vmag(r_C))
+            lines.append(R("r_H at obs:", f"{r_h:.5f} AU"))
+        except Exception:
+            pass
+
+        lines.append(f"q={self.comet_el.get('q',0):.6f} AU   "
+                     f"e={self.comet_el.get('e',0):.6f}   "
+                     f"i={self.comet_el.get('i',0):.4f}°")
+        lines.append(R("Orbital element source:", self.comet_el.get('source', 'JPL Horizons')))
+
+        # PsAng here follows the CTA label used on the canvas: apparent Sun
+        # direction projected on the sky, i.e. comet → Sun, shown as
+        # "sun→comet" in the report convention requested by the user.
+        if self.main_window is not None:
+            try:
+                m = self.main_window._model
+                if m:
+                    sun_xi, sun_eta = m.get('sun_dir', (0.0, 0.0))
+                    psang = math.degrees(math.atan2(sun_xi, sun_eta)) % 360.0
+                    lines.append(R("PsAng (sun→comet):", f"{psang:.1f}°"))
+            except Exception:
+                pass
+        lines.append("")
+
+        # ── Grain size ───────────────────────────────────────────────────
+        lines.append("GRAIN SIZE")
+        lines.append(dash)
+        rho = self.sp_rho.value()
+        qpr = 1.0
+        a_min, a_max = self.sp_r_min.value(), self.sp_r_max.value()
+        beta_at_min = cta._radius_um_to_beta(a_min, rho)
+        beta_at_max = cta._radius_um_to_beta(a_max, rho)
+        lines.append(R("Grain density ρ:", f"{rho:.3g} g/cm³"))
+        lines.append(R("Radiation pressure Qpr:", f"{qpr:.1f}"))
+        lines.append(R("Grain radius (min):", f"{_fmt_um(a_min)} µm  (β {_fmt_beta(beta_at_min)})"))
+        lines.append(R("Grain radius (max):", f"{_fmt_um(a_max)} µm  (β {_fmt_beta(beta_at_max)})"))
+        lines.append(R("Size-distribution slope κ:", f"{self.sp_gamma_size.value():.3g}"))
+        lines.append(R("β formula:", "β = 0.574·Qpr / (ρ·a)  [Burns, Lamy & Soter 1979 Eq.19]"))
+        lines.append("")
+
+        # ── Simulation ───────────────────────────────────────────────────
+        lines.append("SIMULATION")
+        lines.append(dash)
+        lines.append(R("Particles:", f"{self.sp_n.value():,}"))
+        lines.append(R("Grid resolution:", f"{self._grid_npix} × {self._grid_npix} px (fixed)"))
+        lines.append(R("Dust age (release window):", f"{self.sp_max_age.value():.3g} days [approximate, ±2-3 days]"))
+
+        if self.sp_v0.value() != 0:
+            try:
+                if r_h is None:
+                    r_C, _ = cta.elem_to_state(self.comet_el, self.obs_jd)
+                    r_h = float(cta.vmag(r_C))
+                v_at_min = cta.real_ejection_speed_ms(
+                    self.sp_v0.value(), beta_at_min, r_h,
+                    self.sp_gamma.value(), self.sp_mexp.value())
+                v_at_max = cta.real_ejection_speed_ms(
+                    self.sp_v0.value(), beta_at_max, r_h,
+                    self.sp_gamma.value(), self.sp_mexp.value())
+                lines.append(R(f"Ejection speed ({_fmt_um(a_min)} µm):", f"{float(v_at_min):.2f} m/s (at r_H={r_h:.3f} AU)"))
+                lines.append(R(f"Ejection speed ({_fmt_um(a_max)} µm):", f"{float(v_at_max):.2f} m/s"))
+            except Exception:
+                pass
+        lines.append(R("V0 (β=1 reference):", f"{self.sp_v0.value():.3g} m/s [assumed — not independently fit]"))
+        lines.append(R("Velocity law:", f"V = V0·β^{self.sp_gamma.value():.2g}·r_H^-{self.sp_mexp.value():.2g} [Whipple 1951 / Fulle 1987]"))
+        if self.chk_seed.isChecked():
+            lines.append(R("Random seed:", f"{self.sp_seed.value()} (fixed)"))
+        lines.append("")
+
+        # ── Ejection direction ────────────────────────────────────────────
+        lines.append("EJECTION DIRECTION")
+        lines.append(dash)
+        if self.rad_mode_isotropic.isChecked():
+            lines.append(R("Mode:", "Isotropic"))
+        elif self.rad_mode_sunward.isChecked():
+            cone = self.sp_sunward_cone.value()
+            if cone >= 89.999:
+                mode = "Sunward hemisphere [cos(z) modulation]"
+            else:
+                mode = f"Sunward cone {cone:.1f}° half-angle [cos(z) modulation]"
+            lines.append(R("Mode:", mode))
+            lines.append(R("Sunward reference:", self.cmb_sunward_reference.currentText()))
+            lines.append(R("cos(z) exponent ε:", f"{self.sp_sunward_expocos.value():.3g}"))
+            if self.chk_projected_sunward.isChecked():
+                lines.append(R("Sky-plane apparent-Sun gate:", "ON [diagnostic; not used as physical default]"))
+        else:
+            lines.append(R("Mode:", "Active area (rotating nucleus)"))
+            lines.append(R("Obliquity I:", f"{self.sp_nuc_inc.value():.3g}°"))
+            lines.append(R("Subsolar phase Φ:", f"{self.sp_nuc_phi.value():.3g}°"))
+            lines.append(R("Rotation period:", f"{self.sp_period.value():.4g} d"))
+            lines.append(R("Active latitude:", f"{self.sp_lat_min.value():.3g}° to {self.sp_lat_max.value():.3g}°"))
+            lines.append(R("Active longitude:", f"{self.sp_lon_min.value():.3g}° to {self.sp_lon_max.value():.3g}°"))
+            lines.append(R("Sunlit-ground only:", str(self.chk_isun.isChecked())))
+            lines.append(R("cos(z) exponent ε:", f"{self.sp_expocos.value():.3g}"))
+        lines.append("")
+
+        # ── Dust production / phase law ──────────────────────────────────
+        lines.append("DUST PRODUCTION")
+        lines.append(dash)
+        if self.rad_dmdt_steady.isChecked():
+            lines.append(R("Q(t) source:", "Steady constant production"))
+        elif self.rad_dmdt_cobs.isChecked():
+            lines.append(R("Q(t) source:", "COBS light curve (Afρ proxy)"))
+            lines.append("Note: Afρ proxy assumes constant aperture & phase correction")
+            for r in range(self.tbl_anchors.rowCount()):
+                d = self.tbl_anchors.item(r, 0)
+                v = self.tbl_anchors.item(r, 1)
+                if d and v and d.text().strip() and v.text().strip():
+                    lines.append(R(f"  Afρ anchor {d.text().strip()}:", f"{v.text().strip()} cm"))
+            coverage = getattr(self, '_qt_coverage', None)
+            if isinstance(coverage, dict):
+                lines.append(R("COBS coverage quality:", coverage.get('quality', 'INSUFFICIENT')))
+                lines.append(R(
+                    "Continuous supported lookback:",
+                    f"{float(coverage.get('reliable_lookback_days',0.0)):.1f} days "
+                    f"({100.0*float(coverage.get('coverage_fraction',0.0)):.0f}% of F-P maximum age)"))
+                lines.append(R("Coverage assessment:", coverage.get('reason', '')))
+                extra_days = float(getattr(self, '_qt_run_extrapolation_days', 0.0) or 0.0)
+                extrap_method = getattr(self, '_qt_run_extrapolation_method', 'none')
+                if extra_days > 1.0:
+                    lines.append(R(
+                        "Q(t) extrapolated interval:",
+                        f"{extra_days:.1f} days [method: {extrap_method}]"))
+                    lines.append(
+                        "Note: this extrapolation is a user-accepted MC assumption; "
+                        "it is not used to validate the automatic window recommendation.")
+        else:
+            lines.append(R("Q(t) source:", "Manual dM/dt table"))
+            for r in range(self.tbl_dmdt_manual.rowCount()):
+                d = self.tbl_dmdt_manual.item(r, 0)
+                v = self.tbl_dmdt_manual.item(r, 1)
+                if d and v and d.text().strip() and v.text().strip():
+                    lines.append(R(f"  days={d.text().strip()}:", f"rel.dM/dt={v.text().strip()}"))
+        lines.append(R("Grain albedo p_v:", f"{self.sp_pv.value():.3g} [assumed — Hanner 1981]"))
+        lines.append(R("Phase law:", _phase_law_label()))
+        if hasattr(self, 'cmb_phase_law') and self.cmb_phase_law.currentIndex() == 1:
+            lines.append(R("  β_α, m_oe, w_oe:", f"{self.sp_phase_beta.value():.3g} mag/deg, {self.sp_phase_moe.value():.3g} mag, {self.sp_phase_woe.value():.3g}°"))
+        lines.append(R("Phase-law contour-shape effect:", "None for one epoch; brightness scale only"))
+        lines.append("")
+
+        # ── Contour display ──────────────────────────────────────────────
+        lines.append("CONTOUR DISPLAY")
+        lines.append(dash)
+        if self.chk_sb_mode.isChecked():
+            lines.append(R("Mode:", "Calibrated surface brightness [mag/arcsec²]"))
+            lines.append(R("  Observed Afρ:", f"{self.sp_afrho_cal.value():.1f} cm"))
+            lines.append(R("  Faintest level:", f"{self.sp_mag_faint.value():.1f} mag/arcsec²"))
+            lines.append(R("  Brightest level:", f"{self.sp_mag_bright.value():.1f} mag/arcsec²"))
+        else:
+            lines.append(R("Mode:", "Relative percentile morphology contour"))
+            lines.append(R("  Sensitivity floor:", f"{self.sp_floor.value():.3g} %ile"))
+        lines.append(R("Contour rings:", f"{self.sp_nlevels.value()}"))
+        try:
+            lines.append(R("Presentation style:", self.cmb_mc_view_style.currentText()))
+            lines.append(R("Background:", self.cmb_mc_background.currentText()))
+            lines.append(R("Coordinates:", self.cmb_mc_coordinates.currentText()))
+            lines.append(R("Observed isophotes:",
+                           f"{self.cmb_observed_color.currentText()}, "
+                           f"{self.cmb_observed_ls.currentText()}, "
+                           f"{self.sp_observed_lw.value():.1f} pt"))
+            lines.append(R("MC model contours:",
+                           f"{self.cmb_model_color.currentText()}, "
+                           f"{self.cmb_model_ls.currentText()}, "
+                           f"{self.mc_lw_slider.value()/10:.1f} pt"))
+        except Exception:
+            pass
+        lines.append("")
+
+        # ── F-P/Q(t) bridge notes ─────────────────────────────────────────
+        try:
+            lines.append("F-P / Q(t) WINDOW GUIDANCE")
+            lines.append(dash)
+            dom = float(getattr(self, 'fp_dominant_age', 0.0) or 0.0)
+            max_age = float(getattr(self, 'fp_max_age', 0.0) or 0.0)
+            lines.append(R(
+                "F-P dominant dust age:",
+                f"{dom:.3g} days" if dom > 0 else "Not specified"))
+            lines.append(R(
+                "F-P maximum dust age:",
+                f"{max_age:.3g} days [largest synchrone age]"
+                if max_age > 0 else "Unavailable"))
+            if getattr(self, '_qt_qonly_window', None) is not None:
+                lines.append(R(
+                    "Q(t)-only recommendation:",
+                    f"{self._qt_qonly_window:.3g} days"))
+            if getattr(self, '_qt_suggested_window', None) is not None:
+                lines.append(R(
+                    "Final recommended window:",
+                    f"{self._qt_suggested_window:.3g} days"))
+            elif getattr(self, '_qt_provisional_window', None) is not None:
+                lines.append(R(
+                    "Provisional Q(t) value:",
+                    f"{self._qt_provisional_window:.3g} days [not automatically applicable]"))
+            lines.append(R(
+                "Interpretation:",
+                "Effective morphology window, not unique activity onset"))
+            lines.append("")
+        except Exception:
+            pass
+
+        # ── Software citation ────────────────────────────────────────────
+        lines.append("SOFTWARE")
+        lines.append(dash)
+        lines.append("Thaluang, T. (2026). Comet Tail Analyzer (CTA) v3.1.")
+        lines.append("RNAAS, doi:10.3847/2515-5172/ae6f90")
+        lines.append("Portions ported from py_COMTAILS (Moreno 2025, A&A 695, A263).")
+        return lines
+
+    def _preview_report(self):
+        """Show the report exactly as it would be written, before
+        committing to a file — a read-only monospace preview with its
+        own Save button, so a typo or wrong tab doesn't get baked into
+        a saved .txt with no chance to check first."""
+        text = "\n".join(self._build_report_lines())
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Monte Carlo report — preview")
+        dlg.resize(560, 640)
+        v = QVBoxLayout(dlg)
+        edit = QTextEdit()
+        edit.setReadOnly(True)
+        edit.setPlainText(text)
+        edit.setFont(QFont("Consolas, Courier New, monospace", 10))
+        v.addWidget(edit)
+        bot = QHBoxLayout()
+        btn_save = QPushButton("💾 Save as…")
+        btn_save.clicked.connect(lambda: self._save_report(text))
+        btn_close = QPushButton("Close"); btn_close.setMaximumWidth(90)
+        btn_close.clicked.connect(dlg.close)
+        bot.addWidget(btn_save); bot.addStretch(); bot.addWidget(btn_close)
+        v.addLayout(bot)
+        dlg.exec()
+
+    def _save_report(self, text: str | None = None):
+        """Write the report to a plain-text file. If called from the
+        preview dialog, `text` is the exact text already on screen there
+        (no re-build, so what you previewed is what gets saved even if
+        a field changed in the background somehow); called directly
+        from the button it rebuilds fresh."""
+        if text is None:
+            text = "\n".join(self._build_report_lines())
+        default_name = (
+            f"MC_Report_{self.comet_el.get('name','comet').replace(' ', '_').replace('/', '')}"
+            f"_{cta.jd_to_str(self.obs_jd)[:10]}.txt")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Monte Carlo report", default_name, "Text file (*.txt)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text + "\n")
+            self.lbl_status.setText(f"Report saved to {path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Save Report", f"Could not save report:\n{exc}")
+
+    def _assess_current_qt_coverage(self, qt_result: dict) -> dict:
+        """Validate COBS support for inference and for the selected MC window."""
+        coverage = cta.assess_qt_coverage(
+            qt_result.get("t_jd", []), qt_result.get("Q_kg_s", []),
+            self.obs_jd,
+            max_age_days=float(getattr(self, 'fp_max_age', 0.0) or 0.0),
+            dominant_age_days=float(getattr(self, 'fp_dominant_age', 0.0) or 0.0),
+            smooth_window_days=float(self.sp_qt_smooth.value()))
+        self._qt_coverage = coverage
+        self._qt_recommendation_quality = coverage.get('quality', '')
+        return coverage
+
+    def _validated_cobs_weights(self, qt_result: dict):
+        """Return the recent continuous COBS weights for MC sampling.
+
+        The coverage guard remains strict for *automatic inference*: PARTIAL
+        or INSUFFICIENT coverage cannot produce an automatically applicable
+        MC-window recommendation.  A user-selected release window may still be
+        simulated when a usable recent COBS segment exists.  If that window is
+        longer than the segment, CTA asks for confirmation and then relies on
+        the sampler's documented flat edge extrapolation: the earliest accepted
+        Q(t) value is held constant over the unsupported older interval.
+        """
+        coverage = self._assess_current_qt_coverage(qt_result)
+        t, q, source = self._usable_qt_sampling_arrays(qt_result)
+        if t.size < 2 or q.size != t.size:
+            QMessageBox.warning(
+                self, "Invalid COBS Q(t)",
+                "The calibrated COBS Q(t) curve does not contain at least two "
+                "valid points at or before the observation date. Choose "
+                "Steady/Manual production or obtain additional COBS data.")
+            return None
+
+        lookback = max(0.0, float(self.obs_jd) - float(np.min(t)))
+        current_window = float(self.sp_max_age.value())
+        extra = max(0.0, current_window - lookback)
+        self._qt_run_extrapolation_days = extra
+        self._qt_run_extrapolation_method = "none"
+
+        if extra > 1.0:
+            answer = QMessageBox.question(
+                self, "Partial COBS coverage",
+                f"Current MC release window: {current_window:.0f} d\n"
+                f"Available calibrated Q(t) lookback: {lookback:.0f} d\n"
+                f"Unsupported older interval: {extra:.0f} d\n\n"
+                "The automatic MC-window recommendation remains disabled. "
+                "To run the user-selected model, CTA will hold the earliest "
+                "available Q(t) value constant across the unsupported older "
+                "interval (flat edge extrapolation).\n\n"
+                "Continue with this explicit assumption?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return None
+            self._qt_run_extrapolation_method = "flat earliest-edge Q(t)"
+        elif source == 'raw-qt-fallback':
+            self._qt_run_extrapolation_method = (
+                "none; raw calibrated Q(t) used because automatic F-P/coverage "
+                "guidance was unavailable")
+        elif coverage.get('quality') != 'RELIABLE':
+            self._qt_run_extrapolation_method = "none; coverage provisional"
+
+        return dict(t_jd=t, Q_kg_s=q)
+
+    def _run(self):
+        r_min_um = self.sp_r_min.value()
+        r_max_um = self.sp_r_max.value()
+        if r_min_um >= r_max_um:
+            QMessageBox.warning(self, "Bad Range", "r_min must be less than r_max.")
+            return
+        # β ∝ 1/radius: smallest grain → largest β
+        beta_max = cta._radius_um_to_beta(r_min_um, self.sp_rho.value())
+        beta_min = cta._radius_um_to_beta(r_max_um, self.sp_rho.value())
+
+        qt_weights = None
+        self._last_qt_dips = []
+        if self.rad_dmdt_cobs.isChecked():
+            anchors = self._read_anchor_table()
+            if not anchors:
+                QMessageBox.warning(self, "No Afρ Anchor",
+                    "Enter at least one (Date, Afρ) row — your own measured "
+                    "value, e.g. from Tycho Tracker — or choose a different "
+                    "dM/dt source.")
+                return
+
+            obs_for_qt = self._cobs_obs_list
+            if not obs_for_qt:
+                # Use the persistent cache filled by auto-fetch / explicit fetch.
+                obs_for_qt = getattr(self, '_cobs_ready_cache', None)
+                if obs_for_qt:
+                    self._cobs_obs_list = obs_for_qt
+
+            if not obs_for_qt:
+                # As a last resort, if the Q(t) preview already computed a valid
+                # curve, use that cached Q(t) directly rather than blocking Run.
+                cached_qt = getattr(self, '_last_qt_result', None)
+                if cached_qt is not None and len(cached_qt.get('t_jd', [])) >= 2:
+                    qt_weights = self._validated_cobs_weights(cached_qt)
+                    if qt_weights is None:
+                        return
+                    self._last_qt_dips = cta.find_qt_dips(
+                        qt_weights["t_jd"], qt_weights["Q_kg_s"])
+                else:
+                    # Editable-input workflow: pressing Run should prepare COBS
+                    # automatically if the input selected COBS mode but the cache
+                    # is empty for any reason.
+                    if self.main_window is not None:
+                        self._pending_run_after_cobs = True
+                        self.lbl_status.setText(
+                            "COBS Q(t) was not cached. Auto-fetching now; MC will start when ready.")
+                        self._auto_prepare_qt_after_input_load()
+                        return
+                    QMessageBox.warning(self, "No COBS Data",
+                        "COBS Q(t) source is selected, but no COBS data is cached. "
+                        "Fetch COBS light curve first, or choose a different dM/dt source.")
+                    return
+            else:
+                try:
+                    qt_result = cta.estimate_qt_from_lightcurve(
+                        self.comet_el, obs_for_qt, anchors,
+                        p_v=float(self.sp_pv.value()),
+                        smooth_window_days=self.sp_qt_smooth.value())
+                    self._last_qt_result = qt_result
+                    qt_weights = self._validated_cobs_weights(qt_result)
+                    if qt_weights is None:
+                        return
+                    self._last_qt_dips = cta.find_qt_dips(
+                        qt_weights["t_jd"], qt_weights["Q_kg_s"])
+                except Exception as e:
+                    QMessageBox.warning(self, "Q(t) Estimation Error", str(e))
+                    return
+        elif self.rad_dmdt_manual.isChecked():
+            try:
+                days_arr, dmdt_arr = self._read_dmdt_manual_table()
+            except ValueError as e:
+                QMessageBox.warning(self, "Bad dM/dt Table", str(e))
+                return
+            per_jd_dmdt = self.comet_el.get("T_jd") or cta.date_to_jd(self.comet_el["T"])
+            qt_weights = dict(t_jd=per_jd_dmdt + days_arr, Q_kg_s=dmdt_arr)
+        # else: rad_dmdt_steady — qt_weights stays None, unchanged default behaviour
+
+        size_dist_table = None
+        if self.chk_size_table.isChecked():
+            try:
+                size_dist_table = self._read_size_over_time_table()
+            except ValueError as e:
+                QMessageBox.warning(self, "Bad Grain-Size Table", str(e))
+                return
+
+        self.btn_run.setEnabled(False)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("0%")
+        self.lbl_status.setText("Preparing Monte Carlo run…")
+
+        active_area = None
+        sunward = False
+        if self.rad_mode_active.isChecked():
+            if self.sp_lat_min.value() >= self.sp_lat_max.value():
+                QMessageBox.warning(self, "Bad Range", "Latitude min must be less than max.")
+                self.btn_run.setEnabled(True); self.progress.setRange(0, 1)
+                return
+            if self.sp_lon_min.value() >= self.sp_lon_max.value():
+                QMessageBox.warning(self, "Bad Range", "Longitude min must be less than max.")
+                self.btn_run.setEnabled(True); self.progress.setRange(0, 1)
+                return
+            per_jd = self.comet_el.get("T_jd") or cta.date_to_jd(self.comet_el["T"])
+            active_area = dict(
+                nuc_inc_deg=self.sp_nuc_inc.value(), nuc_phi_deg=self.sp_nuc_phi.value(),
+                period_d=self.sp_period.value(), per_jd=per_jd,
+                lat_min_deg=self.sp_lat_min.value(), lat_max_deg=self.sp_lat_max.value(),
+                lon_min_deg=self.sp_lon_min.value(), lon_max_deg=self.sp_lon_max.value(),
+                isun=self.chk_isun.isChecked(), expocos=self.sp_expocos.value())
+        elif self.rad_mode_sunward.isChecked():
+            sunward = True
+
+        seed = self.sp_seed.value() if self.chk_seed.isChecked() else None
+        self._worker = MCWorker(
+            self.comet_el, self.obs_jd, (beta_min, beta_max),
+            self.sp_gamma_size.value(), self.sp_max_age.value(), self.sp_n.value(),
+            self.sp_v0.value(), self.sp_gamma.value(), self.sp_mexp.value(), seed,
+            qt_weights=qt_weights, active_area=active_area, rho_g_cm3=self.sp_rho.value(),
+            sunward=sunward, sunward_expocos=self.sp_sunward_expocos.value(),
+            sunward_reference=("emission" if self.cmb_sunward_reference.currentIndex() == 0 else "observation"),
+            sunward_cone_half_angle_deg=self.sp_sunward_cone.value(),
+            require_projected_sunward=self.chk_projected_sunward.isChecked(),
+            phase_law=("linear_exponential" if self.cmb_phase_law.currentIndex() == 1 else
+                       "none" if self.cmb_phase_law.currentIndex() == 2 else "schleicher"),
+            phase_linear_beta=self.sp_phase_beta.value(),
+            phase_linear_m_oe=self.sp_phase_moe.value(),
+            phase_linear_w_oe=self.sp_phase_woe.value(),
+            size_dist_table=size_dist_table, p_v=self.sp_pv.value(),
+            grid_npix=self._grid_npix)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished.connect(self._on_done)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
+
+    def _read_anchor_table(self) -> list:
+        import comet_tail_analyzer as cta
+        """Parse (date_str, afrho_cm) rows out of tbl_anchors, silently
+        skipping incomplete/unparseable rows (a blank trailing row from
+        the default single empty row, or a typo) rather than erroring —
+        only rows with BOTH a valid date and a positive number count."""
+        anchors = []
+        for row in range(self.tbl_anchors.rowCount()):
+            date_item = self.tbl_anchors.item(row, 0)
+            afrho_item = self.tbl_anchors.item(row, 1)
+            if date_item is None or afrho_item is None:
+                continue
+            date_str = date_item.text().strip()
+            afrho_str = afrho_item.text().strip()
+            if not date_str or not afrho_str:
+                continue
+            try:
+                cta.date_to_jd(date_str)   # validate parseable, value unused here
+                afrho_val = float(afrho_str)
+                if afrho_val > 0:
+                    anchors.append((date_str, afrho_val))
+            except Exception:
+                continue
+        return anchors
+
+    def _read_dmdt_manual_table(self):
+        """Parse (days_to_perihelion, relative_dM/dt) rows out of
+        tbl_dmdt_manual, matching py_COMTAILS's own table-input
+        convention. Raises ValueError (caught by the caller, shown as a
+        QMessageBox) rather than silently skipping bad rows here — unlike
+        the Afρ anchor table, this table IS the entire dM/dt(t) shape, so
+        a silently-dropped row would change the result without any
+        warning at all, instead of just being one option among several."""
+        import numpy as np
+        days, vals = [], []
+        for row in range(self.tbl_dmdt_manual.rowCount()):
+            d_item = self.tbl_dmdt_manual.item(row, 0)
+            v_item = self.tbl_dmdt_manual.item(row, 1)
+            if d_item is None or v_item is None or not d_item.text().strip():
+                continue
+            try:
+                d = float(d_item.text().strip())
+                v = float(v_item.text().strip())
+            except ValueError:
+                raise ValueError(f"Row {row+1}: \"{d_item.text()}\" / \"{v_item.text()}\" "
+                                 f"isn't a valid number pair.")
+            if v <= 0:
+                raise ValueError(f"Row {row+1}: relative dM/dt must be positive, got {v}.")
+            days.append(d); vals.append(v)
+        if len(days) < 2:
+            raise ValueError("Need at least 2 rows to define a dM/dt(t) shape.")
+        order = np.argsort(days)
+        return np.asarray(days)[order], np.asarray(vals)[order]
+
+    def _read_size_over_time_table(self) -> dict:
+        """Parse (days_to_perihelion, power, r_min_um, r_max_um) rows out
+        of tbl_size_over_time into compute_morphology_mc()'s
+        size_dist_table format. Raises ValueError (caught by the caller)
+        on any bad/incomplete row, same reasoning as _read_dmdt_manual_
+        table() — this table fully determines the simulated size
+        distribution when active, so a silently-dropped row would be a
+        silent change in physics, not a minor omission."""
+        per_jd = self.comet_el.get("T_jd") or cta.date_to_jd(self.comet_el["T"])
+        days, power, rmin, rmax = [], [], [], []
+        for row in range(self.tbl_size_over_time.rowCount()):
+            items = [self.tbl_size_over_time.item(row, c) for c in range(4)]
+            if any(it is None or not it.text().strip() for it in items):
+                continue
+            try:
+                d, p, rn, rx = (float(it.text().strip()) for it in items)
+            except ValueError:
+                raise ValueError(f"Row {row+1} contains a non-numeric value.")
+            if not (0 < rn < rx):
+                raise ValueError(f"Row {row+1}: need 0 < r_min < r_max (got {rn}, {rx}).")
+            days.append(d); power.append(p); rmin.append(rn); rmax.append(rx)
+        if len(days) < 2:
+            raise ValueError("Need at least 2 rows to define how grain size changes over time.")
+        return dict(per_jd=per_jd, days_to_per=days, power=power,
+                   r_min_um=rmin, r_max_um=rmax)
+
+    def _remove_anchor_row(self):
+        row = self.tbl_anchors.currentRow()
+        if row < 0:
+            row = self.tbl_anchors.rowCount() - 1
+        if row >= 0:
+            self.tbl_anchors.removeRow(row)
+
+    def _fetch_cobs_for_qt(self):
+        if self.main_window is None:
+            return
+        self.btn_fetch_cobs.setEnabled(False)
+        self.lbl_cobs_status.setText("Fetching…")
+
+        def _on_cobs_ready(cobs_data):
+            self.btn_fetch_cobs.setEnabled(True)
+            if not cobs_data or not cobs_data.get("obs_list"):
+                self._cobs_obs_list = None
+                self._cobs_ready_cache = None
+                self.lbl_cobs_status.setText(
+                    "No usable COBS data (no light curve found, or "
+                    "ephemeris matching failed).")
+                return
+            self._cobs_obs_list = cobs_data["obs_list"]
+            self._cobs_ready_cache = list(self._cobs_obs_list)
+            counts = cta.summarize_obs_methods(self._cobs_obs_list)
+            method_str = ", ".join(f"{name or key}×{n}" for key, (n, name) in
+                                   list(counts.items())[:4]) if counts else "method info n/a"
+            self.lbl_cobs_status.setText(
+                f"{len(self._cobs_obs_list)} COBS points with ephemeris "
+                f"(source: {cobs_data.get('source','?')}). Methods: {method_str}")
+            # Keep the Q(t) preview/suggestion synchronized whenever COBS
+            # is fetched explicitly from the Simulate tab.
+            try:
+                self._refresh_qt_plot()
+            except Exception:
+                pass
+            self._update_run_button_state()
+
+        self.main_window._ensure_cobs_fetched(_on_cobs_ready)
+
+    def _on_progress(self, pct: int, message: str):
+        pct = max(0, min(100, int(pct)))
+        self.progress.setRange(0, 100)
+        self.progress.setValue(pct)
+        self.progress.setFormat(f"{pct}%")
+        self.lbl_status.setText(message)
+
+    def _on_done(self, result: dict):
+        self._mc_result = result
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100)
+        self.progress.setFormat("100%")
+        self.btn_run.setEnabled(True)
+        self.btn_reextract.setEnabled(True)
+        info = result['info']
+
+        # Auto-fill Smoothing (AU) to match the OLD pixel-based default
+        # (1.5px) for THIS run's grid — but ONLY the first time. Doing
+        # this on every run would silently reproduce the exact bug this
+        # control exists to fix: re-syncing to "1.5 pixels of THIS run's
+        # grid" every time means a smaller r_min (bigger grid) still gets
+        # a bigger absolute smoothing radius automatically, same as
+        # before. Filling it once gives a sensible starting point; from
+        # then on the value the user sees is the value actually used,
+        # stable across later r_min/r_max changes unless they edit it
+        # themselves.
+        # v3.1 — update smooth floor on EVERY run (grid size may change
+        # if grain range changed). Only move the slider if the user hasn't
+        # manually edited it — if they have, preserve their AU value but
+        # clamp upward to the new floor if needed.
+        self.sp_smooth_au.setValue(0.0)
+        self._smooth_au_initialized = True
+
+        # Sync ejection velocity into the main panel + recompute the F-P
+        # model with it, so both windows agree (v3.1 — see class docstring
+        # for why v0 maps to v_N0 specifically; edit here to change that).
+        # BUG FIX (v3.1): must WAIT for that recompute to actually finish
+        # before drawing the MC contour — recompute_and_then() handles
+        # this; calling ctrl._emit_compute() and immediately continuing
+        # (the old code) drew the MC contour against whatever F-P model
+        # was left over from a PREVIOUS run, since _emit_compute() only
+        # starts a background computation and returns right away. See
+        # recompute_and_then()'s own docstring for the full symptom this
+        # caused (F-P appearing to ignore a just-changed v0=0).
+        if self.main_window is not None:
+            self.main_window.ctrl.set_ejection_params(dict(
+                v_R0=0.0, v_T0=0.0, v_N0=info['v0_coeff'],
+                gamma=info['gamma'], m_exp=info['m_exp']))
+            self.main_window.recompute_and_then(lambda: self._extract_and_send(info))
+        else:
+            self._extract_and_send(info)
+
+    def _extract_and_send(self, info):
+        """Shared by _on_done() and _reextract_contours()."""
+        try:
+            if self.chk_sb_mode.isChecked():
+                afrho_cm  = self.sp_afrho_cal.value()
+                delta_au  = info.get('r_geo_au', 1.5)
+                r_h_au    = info.get('r_helio_au', 2.0)
+                au_per_px = (self.main_window.ctrl.au_px_spin.value()
+                             if self.main_window else 0.003)
+                sb_result = cta.calibrate_mc_to_surface_brightness(
+                    self._mc_result, afrho_cm=afrho_cm,
+                    delta_au=delta_au, r_h_au=r_h_au, au_per_px=au_per_px)
+                n_rings    = self.sp_nlevels.value()
+                mag_faint  = self.sp_mag_faint.value()
+                mag_bright = self.sp_mag_bright.value()
+                sb_peak    = sb_result.get('sb_peak',  float('nan'))
+                sb_median  = sb_result.get('sb_median', float('nan'))
+                # Clamp levels to physically meaningful range
+                import math
+                if math.isfinite(sb_peak) and math.isfinite(sb_median):
+                    mag_bright = max(mag_bright, sb_peak + 0.5)
+                    mag_faint  = min(mag_faint,  sb_median - 1.0)
+                mag_levels = np.linspace(mag_faint, mag_bright, n_rings).tolist()
+                paths = cta.extract_contours_at_magnitude_levels(
+                    sb_result, mag_levels=mag_levels)
+                sb_info = (f"  model peak={sb_peak:.1f}, median={sb_median:.1f} mag/arcsec²"
+                           if math.isfinite(sb_peak) else "")
+                mode_note = (f"SB-calibrated  Afρ={afrho_cm:.0f} cm  "
+                             f"levels={mag_bright:.1f}–{mag_faint:.1f} mag/arcsec²{sb_info}")
+            else:
+                paths = cta.extract_morphology_contours(
+                    self._mc_result,
+                    n_levels=self.sp_nlevels.value(),
+                    percentile_floor=self.sp_floor.value(),
+                    smooth_sigma_au=self.sp_smooth_au.value())
+                mode_note = (f"floor={self.sp_floor.value():.0f}%ile, "
+                             f"{self.sp_nlevels.value()} levels")
+        except Exception as e:
+            self.lbl_status.setText(f"Contour extraction error: {e}")
+            return
+
+        if not paths:
+            self.lbl_status.setText(
+                f"n_used={info['n_used']}/{info['n_particles']} — not enough "
+                f"signal. Try adjusting thresholds or increasing particles.")
+            return
+
+        if self.main_window is not None:
+            self.main_window.set_mc_contours(paths, info=info)
+            qt_note = "  ·  Q(t)-weighted release times" if info.get('qt_weighted') else ""
+            if info.get('active_area_used'):
+                qt_note += "  ·  active-area ejection"
+            elif info.get('sunward_used'):
+                cone = float(info.get('sunward_cone_half_angle_deg', 90.0))
+                ref = info.get('sunward_reference', 'emission')
+                qt_note += ("  ·  sunward hemisphere" if cone >= 89.999
+                            else f"  ·  sunward cone {cone:.0f}°")
+                qt_note += f" ({ref} reference)"
+                if info.get('require_projected_sunward'):
+                    qt_note += "  ·  apparent-Sun gate"
+            self.lbl_status.setText(
+                f"n_used={info['n_used']}/{info['n_particles']}  ·  "
+                f"{len(paths)} contour path(s) ({mode_note}) sent to main canvas  ·  "
+                f"main F-P model recomputed with v_N0={info['v0_coeff']:.2f} m/s, "
+                f"γ={info['gamma']:.2g}, m={info['m_exp']:.2g}.{qt_note}")
+        else:
+            self.lbl_status.setText(
+                f"n_used={info['n_used']}/{info['n_particles']}  ·  "
+                f"{len(paths)} contour path(s) ({mode_note})")
+
+    def _reextract_contours(self):
+        """Re-threshold the CACHED Monte Carlo result with the current
+        Floor/N levels values — no new sampling, so this is fast even
+        though Run Monte Carlo itself (N=tens of thousands of particles)
+        is not. Use this to dial in Floor/N levels without waiting for a
+        fresh run each time."""
+        if self._mc_result is None:
+            return
+        self._extract_and_send(self._mc_result['info'])
+
+    def _export_current_mc_figure(self):
+        """Export the main-canvas Matplotlib figure without any Qt chrome.
+
+        The current Display-tab presentation state is used exactly as shown.
+        Raster formats are written at 300 dpi; PDF/SVG retain vector contour
+        paths, which is preferable for journal figures and later layout work.
+        """
+        if self.main_window is None or self.main_window._model is None:
+            QMessageBox.information(
+                self, "No Figure",
+                "Run the F-P model and Monte Carlo model before exporting.")
+            return
+
+        import os
+        import re
+
+        name = self.comet_el.get("name", "Comet")
+        name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "Comet"
+        try:
+            obs = cta.jd_to_str(self.obs_jd).replace(" UT", "")[:10]
+        except Exception:
+            obs = "epoch"
+        mode = self.cmb_mc_view_style.currentData() or "figure"
+        default_name = f"{name}_{obs}_MC_{mode}.png"
+
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, "Export Monte Carlo figure", default_name,
+            "PNG image (*.png);;TIFF image (*.tif *.tiff);;PDF vector (*.pdf);;SVG vector (*.svg)")
+        if not path:
+            return
+
+        # Add a sensible suffix if the user omitted one.
+        root, ext = os.path.splitext(path)
+        if not ext:
+            if "TIFF" in selected_filter:
+                ext = ".tif"
+            elif "PDF" in selected_filter:
+                ext = ".pdf"
+            elif "SVG" in selected_filter:
+                ext = ".svg"
+            else:
+                ext = ".png"
+            path = root + ext
+
+        try:
+            fig = self.main_window.canvas.fig
+            fig.savefig(
+                path,
+                dpi=300,
+                bbox_inches="tight",
+                facecolor=fig.get_facecolor(),
+                edgecolor="none")
+            self.lbl_status.setText(f"Figure exported: {path}")
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Export Failed",
+                f"Could not export the figure:\n{exc}")
+
+    def _on_error(self, msg: str):
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("Error")
+        self.btn_run.setEnabled(True)
+        self.lbl_status.setText(f"Error: {msg}")
+        QMessageBox.warning(self, "Monte Carlo Error", msg)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3627,9 +7984,13 @@ class DustProductionDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("☄ Comet Tail Analyzer  —  Finson–Probstein Model  ·  v3.0")
-        self.setMinimumSize(1300, 800)
-        self.resize(1440, 900)
+        self.setWindowTitle("☄ Comet Tail Analyzer  —  Finson–Probstein Model  ·  v3.1")
+        # Keep a practical lower bound for compact laptop displays, while
+        # opening maximized at startup (see main()). The left and right
+        # panels are scrollable, so a 960 px-wide workspace remains usable.
+        self.setMinimumSize(960, 640)
+        self.resize(1366, 860)
+        self._startup_layout_applied = False
 
         self._model    = None
         self._comet_el = None
@@ -3637,6 +7998,9 @@ class MainWindow(QMainWindow):
         self._cobs_data     = None
         self._cobs_data_for = None # comet name self._cobs_data was fetched for
         self._pending_cobs_callback  = None
+
+        # Update check (v3.1) — see _check_for_update_silent/_manual below.
+        self._update_worker = None
 
         # Embedded Animator (v3.0) state — see _anim_* methods below.
         self._anim_frames    = []
@@ -3661,12 +8025,48 @@ class MainWindow(QMainWindow):
         self._build_status()
         self._wire_animator_controls()
 
+        # The maximized client size is only final after the window has been
+        # shown. Apply the startup splitter proportions on the first event-
+        # loop turn so they are derived from the user's actual display.
+        QTimer.singleShot(0, self._apply_responsive_layout)
+
+        # Silent update check (v3.1), a few seconds after the window is
+        # actually usable — never blocks startup, never shows anything
+        # if there's no update, no network, or GitHub rate-limits us.
+        QTimer.singleShot(3000, self._check_for_update_silent)
+
     # ── Menu ──────────────────────────────────────────────────────────────
     def _build_menu(self):
         mb = self.menuBar()
 
         # File
         file_m = mb.addMenu("File")
+
+        # Standard file-opening shortcut: open the image setup dialog,
+        # where the user can choose FITS/PNG/JPEG and configure the overlay.
+        act_image_setup = QAction("Open / Setup Image…", self)
+        act_image_setup.setShortcut("Ctrl+O")
+        act_image_setup.setToolTip(
+            "Open the Image Setup & Calibration dialog to load or configure "
+            "the observed image overlay.")
+        act_image_setup.triggered.connect(
+            lambda: self.ctrl._open_image_dialog())
+        file_m.addAction(act_image_setup)
+
+        # Run the normal F-P workflow from anywhere in the main window.
+        # This delegates to the existing COMPUTE MODEL button, preserving
+        # all current validation, progress handling, and worker-thread logic.
+        self._act_run_fp = QAction("▶  Run F-P Model", self)
+        self._act_run_fp.setShortcut("F5")
+        self._act_run_fp.setToolTip(
+            "Run the Finson–Probstein model using the current inputs "
+            "(same action as COMPUTE MODEL).")
+        self._act_run_fp.setStatusTip(
+            "Run the Finson–Probstein model with the current inputs (F5).")
+        self._act_run_fp.triggered.connect(self._run_fp_model_from_menu)
+        file_m.addAction(self._act_run_fp)
+        file_m.addSeparator()
+
         act_save_png = QAction("Save plot as PNG…", self)
         act_save_png.setShortcut("Ctrl+S")
         act_save_png.triggered.connect(self._save_png)
@@ -3688,7 +8088,8 @@ class MainWindow(QMainWindow):
         view_m.addAction(act_reset)
         view_m.addSeparator()
         act_orbit_view = QAction("🪐  Orbit position diagram…", self)
-        act_orbit_view.setShortcut("Ctrl+O")
+        # Ctrl+O is reserved for Open / Setup Image (standard File shortcut).
+        act_orbit_view.setShortcut("Ctrl+Shift+O")
         act_orbit_view.triggered.connect(self._open_orbit_window)
         view_m.addAction(act_orbit_view)
         act_lc_view = QAction("📈  Light curve…", self)
@@ -3698,6 +8099,22 @@ class MainWindow(QMainWindow):
             "for the selected comet.")
         act_lc_view.triggered.connect(self._menu_open_lc)
         view_m.addAction(act_lc_view)
+        act_mc_view = QAction("🎲  Monte Carlo morphology…", self)
+        act_mc_view.setToolTip(
+            "Population-level dust model: samples a grain-size distribution "
+            "+ release-time window instead of one syndyne/synchrone curve "
+            "at a time, and bins the result into a density map.")
+        act_mc_view.triggered.connect(self._open_mc_window)
+        view_m.addAction(act_mc_view)
+
+        self._act_clear_mc = QAction("✕  Clear all model results", self)
+        self._act_clear_mc.setShortcut("Ctrl+Shift+M")
+        self._act_clear_mc.setToolTip(
+            "Remove Finson–Probstein and Monte Carlo computed overlays while "
+            "preserving the loaded image, image isophotes, and editable inputs.")
+        self._act_clear_mc.setEnabled(False)
+        self._act_clear_mc.triggered.connect(self._clear_all_models)
+        view_m.addAction(self._act_clear_mc)
         view_m.addSeparator()
 
         # Theme submenu
@@ -3735,6 +8152,10 @@ class MainWindow(QMainWindow):
         act_about = QAction("About…", self)
         act_about.triggered.connect(self._about)
         help_m.addAction(act_about)
+        help_m.addSeparator()
+        act_update = QAction("🔔  Check for Updates…", self)
+        act_update.triggered.connect(self._check_for_update_manual)
+        help_m.addAction(act_update)
 
     # ── UI ────────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -3747,6 +8168,7 @@ class MainWindow(QMainWindow):
         # Splitter: left | center | right
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(2)
+        self.splitter = splitter
 
         # Left
         self.ctrl = ControlPanel()
@@ -3770,9 +8192,47 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([370, 800, 300])
+        self.info.setMinimumWidth(240)
+        # Temporary pre-show sizes. _apply_responsive_layout() replaces
+        # these once the maximized client width is known.
+        splitter.setSizes([320, 780, 260])
 
         hbox.addWidget(splitter)
+
+    def _apply_responsive_layout(self):
+        """Set sensible startup splitter widths for the current display.
+
+        This runs once after the maximized window is shown. It intentionally
+        does not keep forcing proportions during later resizes, so users can
+        drag splitter handles and retain their preferred workspace.
+        """
+        if self._startup_layout_applied or not hasattr(self, "splitter"):
+            return
+
+        total = self.centralWidget().width() if self.centralWidget() else self.width()
+        if total <= 0:
+            # Window geometry may not yet be committed on some platforms.
+            QTimer.singleShot(50, self._apply_responsive_layout)
+            return
+
+        # Side panels stay within their widget constraints while scaling
+        # gently with screen width. The plot receives all remaining space.
+        left = max(320, min(400, int(total * 0.24)))
+        right = max(240, min(300, int(total * 0.19)))
+        handles = self.splitter.handleWidth() * 2
+        center = max(360, total - left - right - handles)
+        self.splitter.setSizes([left, center, right])
+        self._startup_layout_applied = True
+
+    def _run_fp_model_from_menu(self):
+        """Run F-P through the exact same path as the sidebar button."""
+        if not hasattr(self, "ctrl"):
+            return
+        if not self.ctrl.btn_compute.isEnabled():
+            self.status.showMessage(
+                "Finson–Probstein computation is already running…", 3000)
+            return
+        self.ctrl.btn_compute.click()
 
     def _build_status(self):
         self.status = QStatusBar()
@@ -3838,6 +8298,24 @@ class MainWindow(QMainWindow):
             f"Linked to {el.get('name','this comet')} — "
             f"click COMPUTE FRAMES to (re)build the animation.")
 
+        # BUG FIX (v3.1): an MC contour computed for the PREVIOUS comet was
+        # being left on the canvas (self.canvas.mc_contours/mc_info) after
+        # switching to a new one — same "stale data from before" issue as
+        # the Animator frames above, just not yet handled for this piece of
+        # state. Clear it here too, for the same reason.
+        self.canvas.mc_contours = []
+        self.canvas.mc_info = None
+        self.ctrl._mc_contour_visible = False
+        try:
+            self.ctrl.btn_clear_mc.setEnabled(False)
+            self._act_clear_mc.setEnabled(False)
+        except Exception:
+            pass
+        # Clear MCWindow's remembered state so next open starts fresh
+        # for the new comet — old grain size range, release window,
+        # COBS anchors etc. from the previous comet should not persist.
+        MCWindow._saved_state = None
+
     def _ensure_cobs_fetched(self, then_callback):
         """Call then_callback(cobs_data) once COBS data exists for the
         *current* comet — reusing the cache if it's still for the same
@@ -3877,7 +8355,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Comet",
                                 "Select or fetch a comet first.")
             return
-        self._ensure_cobs_fetched(lambda d: self._open_lc_window())
+
+        # Light Curve is an auto-chain action: fetch COBS first when the
+        # current comet has no cached data, then open the window only after
+        # the worker succeeds.  On a real fetch error, _fetch_cobs() already
+        # reports the error; do not continue into _open_lc_window(), which
+        # would otherwise show the misleading "Fetch COBS light curve first"
+        # message even though an automatic fetch was just attempted.
+        self._ensure_cobs_fetched(
+            lambda d: self._open_lc_window() if d is not None else None)
 
     def _anim_parse_range(self):
         try:
@@ -3893,11 +8379,12 @@ class MainWindow(QMainWindow):
         return start_jd, end_jd
 
     def _anim_gather_inputs(self):
-        """(comet_el, betas, ages, max_age, n_pts) for the CURRENT comet/
-        model-panel settings, or None (with a warning already shown) if
-        anything's missing — gathered fresh on every Compute/Auto-suggest
+        """(comet_el, betas, ages, max_age, n_pts, ejection) for the CURRENT
+        comet/model-panel settings, or None (with a warning already shown)
+        if anything's missing — gathered fresh on every Compute/Auto-suggest
         click rather than once up front, since unlike the old popup this
-        panel stays open across comet/setting changes."""
+        panel stays open across comet/setting changes. ejection is the
+        v3.1 ejection-velocity dict (all-zero by default == v3.0 model)."""
         el = self._active_comet_el()
         if not el:
             QMessageBox.warning(self, "No Comet",
@@ -3910,7 +8397,8 @@ class MainWindow(QMainWindow):
                 "Enter at least one valid β value and synchrone age in "
                 "the model panel first.")
             return None
-        return el, betas, ages, self.ctrl.max_age.value(), self.ctrl.n_pts.value()
+        return (el, betas, ages, self.ctrl.max_age.value(), self.ctrl.n_pts.value(),
+                self.ctrl.get_ejection_params())
 
     def _anim_auto_suggest(self):
         start_jd, end_jd = self._anim_parse_range()
@@ -3919,12 +8407,12 @@ class MainWindow(QMainWindow):
         inputs = self._anim_gather_inputs()
         if inputs is None:
             return
-        el, betas, ages, max_age, n_pts = inputs
+        el, betas, ages, max_age, n_pts, ejection = inputs
         max_au = max_deg = 0.0
         for jd in np.linspace(start_jd, end_jd, 5):
             try:
                 m = cta.compute_model(el, float(jd), betas, ages, max_age,
-                                      min(n_pts, 60))
+                                      min(n_pts, 60), ejection=ejection)
             except Exception:
                 continue
             ex, ey = _model_extent_au(m)
@@ -3982,7 +8470,7 @@ class MainWindow(QMainWindow):
         inputs = self._anim_gather_inputs()
         if inputs is None:
             return
-        el, betas, ages, max_age, n_pts = inputs
+        el, betas, ages, max_age, n_pts, ejection = inputs
         self._anim_sync_fov_to_overlay(el)
         step = self.info.anim_step.value()
         n_frames = int(round((end_jd - start_jd) / step)) + 1
@@ -4011,11 +8499,12 @@ class MainWindow(QMainWindow):
             error        = pyqtSignal(str)
 
             def __init__(self, el, betas, ages, max_age, n_pts,
-                        start_jd, step, n_frames):
+                        start_jd, step, n_frames, ejection=None):
                 super().__init__()
                 self.el, self.betas, self.ages = el, betas, ages
                 self.max_age, self.n_pts = max_age, n_pts
                 self.start_jd, self.step, self.n_frames = start_jd, step, n_frames
+                self.ejection = ejection
 
             def run(self):
                 try:
@@ -4023,7 +8512,7 @@ class MainWindow(QMainWindow):
                         jd = self.start_jd + i * self.step
                         m  = cta.compute_model(self.el, jd, self.betas,
                                                self.ages, self.max_age,
-                                               self.n_pts)
+                                               self.n_pts, ejection=self.ejection)
                         # compute_model() doesn't set info['name'] itself
                         # (only _on_model_ready does, for the regular
                         # Compute Model flow) — without this, the title
@@ -4036,7 +8525,7 @@ class MainWindow(QMainWindow):
                     self.error.emit(str(e))
 
         self._anim_worker = AnimWorker(el, betas, ages, max_age, n_pts,
-                                       start_jd, step, n_frames)
+                                       start_jd, step, n_frames, ejection=ejection)
         self._anim_worker.frame_done.connect(self._anim_frames.append)
         self._anim_worker.progress.connect(self.info.anim_progress.setValue)
         self._anim_worker.finished_all.connect(self._anim_on_compute_done)
@@ -4107,11 +8596,23 @@ class MainWindow(QMainWindow):
 
     # ── LC popup window ────────────────────────────────────────────────
     def _open_lc_window(self):
-        """Open a larger standalone light curve window."""
+        """Open a larger standalone light curve window.
+
+        A fitted H₀/n pair is optional.  The COBS viewer can still plot the
+        raw date/magnitude observations when ephemeris enrichment or the
+        H₀/n fit is unavailable.  Requiring H₀ here caused a successful COBS
+        download with raw observations to be rejected as "No Data".
+        """
         d = getattr(self, "_cobs_data", None)
-        if not d or d.get("H0") is None:
-            QMessageBox.information(self, "No Data",
-                "Fetch COBS light curve first."); return
+        has_raw = bool(d and d.get("raw_obs"))
+        has_eph = bool(d and d.get("obs_list"))
+        has_fit = bool(d and d.get("H0") is not None and d.get("n") is not None)
+        if not (has_raw or has_eph or has_fit):
+            QMessageBox.information(
+                self, "No COBS Data",
+                "No COBS light-curve observations are available for the "
+                "selected comet.")
+            return
         try:
             # Compute today's actual r_helio and delta from orbital elements.
             # info.r_helio / r_geo are for the *model obs date*, not today,
@@ -4168,7 +8669,20 @@ class MainWindow(QMainWindow):
             cb, self._pending_cobs_callback = self._pending_cobs_callback, None
             if cb: cb(d)
         def _on_err(msg):
-            self.status.showMessage("COBS fetch failed.", 3000)
+            logging.warning("COBS fetch failed for %s: %s", name, msg)
+            short_msg = msg.replace("\n", " ")
+            if len(short_msg) > 500:
+                short_msg = short_msg[:497] + "…"
+            self.status.showMessage(f"COBS fetch failed: {short_msg}", 12000)
+
+            # A windowed PyInstaller build has no visible console.  Show the
+            # actual network/API error instead of allowing the Light Curve
+            # action to fall through to a generic "fetch first" message.
+            QMessageBox.warning(
+                self, "COBS Fetch Failed",
+                f"Could not retrieve the COBS light curve for {name}.\n\n"
+                f"{short_msg}")
+
             cb, self._pending_cobs_callback = self._pending_cobs_callback, None
             if cb: cb(None)
         self._cobs_worker.done.connect(_on_done)
@@ -4220,7 +8734,204 @@ class MainWindow(QMainWindow):
         self.status.showMessage(
             f"Theme: {'Dark ☾' if is_dark else 'Light ☀'}", 2500)
 
-    def _on_compute(self, comet_el, obs_jd, betas, ages, max_age, n_pts):
+    def recompute_and_then(self, callback):
+        """
+        v3.1 bug fix — MCWindow's "Run Monte Carlo" syncs ejection params
+        then needs the F-P model recomputed with them BEFORE drawing the
+        MC contour alongside it. The obvious way — call ctrl._emit_compute()
+        then immediately draw — is WRONG: _emit_compute() only *starts* a
+        background ComputeWorker (see _on_compute()) and returns right
+        away, so the immediate draw used whatever self._model was left
+        over from a PREVIOUS run (e.g. an earlier nonzero-v0 test) — not
+        the new one. This produced a real, reproducible symptom: setting
+        v0 back to 0 and re-running still showed the F-P curves diverging
+        from the MC contour, because the visible F-P curves weren't
+        actually at v0=0 yet, just stale.
+        This method does the SAME recompute but calls `callback()` only
+        once the new model has actually arrived (chained onto the same
+        ComputeWorker.finished signal _on_model_ready() itself uses), so
+        a caller can safely redraw using the new self._model right after.
+        """
+        betas = self.ctrl._parse_floats(self.ctrl.beta_str.text())
+        ages  = self.ctrl._parse_ints(self.ctrl.age_str.text())
+        if not betas or not ages or self.ctrl._comet_el is None:
+            callback()   # nothing sensible to recompute; don't block the caller
+            return
+
+        comet_el = self.ctrl._comet_el
+        obs_jd = comet_el.get("obs_jd", cta.today_jd())
+        ov = self.ctrl.get_overlay()
+        ejection = self.ctrl.get_ejection_params()
+
+        self._comet_el = comet_el
+        self.canvas._vis = self.ctrl.get_vis()
+        self.canvas.nuc_x   = ov["nuc_x"]
+        self.canvas.nuc_y   = ov["nuc_y"]
+        self.canvas.au_per_px = ov["au_per_px"]
+        self.canvas.north_pa  = ov["north_pa"]
+        comet_el["obs_jd"] = obs_jd
+
+        self.ctrl.set_computing(True)
+        self._act_run_fp.setEnabled(False)
+        self.status.showMessage("Computing Finson–Probstein model…")
+
+        worker = ComputeWorker(comet_el, obs_jd, betas, ages,
+                               self.ctrl.max_age.value(), self.ctrl.n_pts.value(),
+                               ejection=ejection)
+        self._worker = worker   # keep a reference, same as _on_compute() does
+
+        def _done(model):
+            self._on_model_ready(model, betas, ov)
+            callback()
+
+        worker.progress.connect(
+            lambda v, msg: (self.ctrl.progress_bar.setValue(v),
+                            self.status.showMessage(msg)))
+        worker.finished.connect(_done)
+        worker.error.connect(self._on_compute_error)
+        worker.start()
+
+    def set_mc_contours(self, paths, info=None):
+        """
+        v3.1, Phase 2 — receives contour paths (from extract_morphology_
+        contours()) pushed by the Monte Carlo window's Run button, via an
+        explicit self.main_window reference held by MCWindow (that window
+        uses parent=None for the same reason OrbitWindow/LCWindow do — see
+        their comments — so this can't go through Qt parent/child
+        signaling). Redraws immediately using the already-cached F-P
+        model/image, same "redraw without recompute" pattern as
+        _set_theme() above. info (the MC result's info dict) is stored
+        for the optional on-canvas parameter box — see draw_model()'s
+        mc_info_box handling.
+
+        BUG FIX (v3.1): _on_model_ready() rotates the F-P model's
+        syndynes/synchrones/sun_dir/antivel_dir by the "Grid rotation
+        (match observed tail)" slider, but extract_morphology_contours()
+        deliberately returns PURE, unrotated sky-plane coordinates (see
+        its docstring) so it can go through the main canvas's own to_px()
+        — which only applies north_pa, not this separate grid-rotation
+        offset. Net effect: with a nonzero Grid Rotation, the F-P curves
+        rotated correctly but the MC contour silently stayed at its
+        original, un-rotated orientation — exactly the kind of "model
+        points one way, should point another" mismatch this was caught
+        from. Apply the SAME rotation here, the same formula as _on_
+        model_ready(), so both stay locked together. Like self._model's
+        own rotation, this is baked in at the time this method runs, not
+        live — if Grid Rotation is changed afterward without re-running
+        Monte Carlo, re-run it to pick up the new angle (same convention
+        as the F-P model itself).
+        """
+        rot_deg = self.ctrl.get_rotation_offset()
+        if abs(rot_deg) > 1e-3 and paths:
+            theta = np.radians(-rot_deg)
+            cos_t, sin_t = np.cos(theta), np.sin(theta)
+            paths = [
+                np.column_stack([p[:, 0]*cos_t - p[:, 1]*sin_t,
+                                 p[:, 0]*sin_t + p[:, 1]*cos_t])
+                for p in paths
+            ]
+        # A Monte Carlo population contour is intended as the final morphology
+        # comparison layer. Hide the discrete F-P diagnostic curves automatically
+        # so the canvas is not cluttered by syndynes/synchrones. The checkboxes are
+        # updated visibly; users may turn either layer back on manually afterward.
+        if paths:
+            try:
+                self.ctrl.chk_synd.setChecked(False)
+                self.ctrl.chk_sync.setChecked(False)
+            except Exception:
+                pass
+
+        self.canvas.mc_contours = paths
+        self.canvas.mc_info = info
+        self.ctrl._mc_contour_visible = True
+        try:
+            self.ctrl.btn_clear_mc.setEnabled(True)
+            self._act_clear_mc.setEnabled(True)
+        except Exception:
+            pass
+        self.canvas._vis = self.ctrl.get_vis()
+        if self._model:
+            ov = self.ctrl.get_overlay()
+            self.canvas.draw_model(
+                self._model, ov["img_arr"] if self.ctrl._img_arr is not None else None)
+        self.status.showMessage(
+            f"Monte Carlo contour ({len(paths)} path segment(s)) shown on main canvas.", 5000)
+
+    def _clear_all_models(self):
+        """Clear every computed model result while preserving user inputs.
+
+        Removed from the main canvas:
+          * Finson–Probstein syndynes, synchrones, orbital path and vectors
+          * Monte Carlo morphology contours and the MC parameter box
+
+        Preserved:
+          * loaded image and image-derived isophotes
+          * F-P and MC editable input values
+          * saved/loadable input state
+
+        This distinction matters because an MC velocity choice can update the
+        main F-P ejection-velocity setting. Clearing only the MC contour could
+        therefore leave an F-P result computed with the MC assumptions on the
+        canvas.
+        """
+        had_fp = bool(self._model is not None or self.canvas._model is not None)
+        had_mc = bool(self.canvas.mc_contours or self.canvas.mc_info)
+
+        # Clear the computed Finson–Probstein result in both the main-window
+        # cache and the canvas cache. Inputs in ControlPanel are untouched.
+        self._model = None
+        self.canvas._model = None
+
+        # Clear the computed Monte Carlo result.
+        self.canvas.mc_contours = []
+        self.canvas.mc_info = None
+        self.ctrl._mc_contour_visible = False
+
+        # Prevent an already-open MC window from restoring its old density
+        # result through a display/threshold refresh. Keep all editable inputs.
+        mc_win = getattr(self, "_mc_win", None)
+        if mc_win is not None:
+            try:
+                mc_win._mc_result = None
+                mc_win.lbl_status.setText(
+                    "All model results cleared; editable inputs preserved.")
+            except Exception:
+                pass
+
+        try:
+            self.ctrl.btn_clear_mc.setEnabled(False)
+            self._act_clear_mc.setEnabled(False)
+        except Exception:
+            pass
+
+        # Redraw the observational layer only. Image-derived isophotes remain
+        # visible because draw_image_preview() now honours the current isophote
+        # display settings.
+        self.canvas._vis = self.ctrl.get_vis()
+        if self.ctrl._img_arr is not None:
+            self.canvas.nuc_x = self.ctrl.get_overlay().get("nuc_x", self.canvas.nuc_x)
+            self.canvas.nuc_y = self.ctrl.get_overlay().get("nuc_y", self.canvas.nuc_y)
+            self.canvas.north_pa = self.ctrl.get_overlay().get("north_pa", self.canvas.north_pa)
+            self.canvas.draw_image_preview(self.ctrl._img_arr)
+        else:
+            self.canvas._imgArr = None
+            self.canvas._draw_empty()
+
+        if had_fp and had_mc:
+            msg = "Finson–Probstein and Monte Carlo models cleared; inputs preserved."
+        elif had_fp:
+            msg = "Finson–Probstein model cleared; inputs preserved."
+        elif had_mc:
+            msg = "Monte Carlo model cleared; inputs preserved."
+        else:
+            msg = "No computed model is currently displayed."
+        self.status.showMessage(msg, 5000)
+
+    # Backward-compatible internal alias for any older signal wiring.
+    def _clear_mc_model(self):
+        self._clear_all_models()
+
+    def _on_compute(self, comet_el, obs_jd, betas, ages, max_age, n_pts, ejection=None):
         self._comet_el = comet_el
         vis = self.ctrl.get_vis()
         ov  = self.ctrl.get_overlay()
@@ -4234,9 +8945,11 @@ class MainWindow(QMainWindow):
         comet_el["obs_jd"] = obs_jd
 
         self.ctrl.set_computing(True)
+        self._act_run_fp.setEnabled(False)
         self.status.showMessage("Computing Finson–Probstein model…")
 
-        self._worker = ComputeWorker(comet_el, obs_jd, betas, ages, max_age, n_pts)
+        self._worker = ComputeWorker(comet_el, obs_jd, betas, ages, max_age, n_pts,
+                                     ejection=ejection)
         self._worker.progress.connect(
             lambda v, msg: (self.ctrl.progress_bar.setValue(v),
                             self.status.showMessage(msg)))
@@ -4246,6 +8959,13 @@ class MainWindow(QMainWindow):
 
     def _on_model_ready(self, model, betas, ov):
         self._model = model
+        # A Finson–Probstein result is now displayed, so CLEAR ALL MODELS
+        # must be available even when no Monte Carlo result exists yet.
+        try:
+            self.ctrl.btn_clear_mc.setEnabled(True)
+            self._act_clear_mc.setEnabled(True)
+        except Exception:
+            pass
         model["info"]["name"] = self._comet_el.get("name","Comet")
         info = model["info"]
 
@@ -4379,6 +9099,7 @@ class MainWindow(QMainWindow):
         self.status_mode.setText(mode)
         self.status.showMessage("Model computed successfully", 3000)
         self.ctrl.set_computing(False)
+        self._act_run_fp.setEnabled(True)
 
     def _effective_plate_scale_arcsec(self):
         """
@@ -4407,6 +9128,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Compute Error", msg)
         self.status.showMessage(f"Error: {msg}", 5000)
         self.ctrl.set_computing(False)
+        self._act_run_fp.setEnabled(True)
 
     # ── Fetch ──────────────────────────────────────────────────────────────
     def _on_fetch(self, desig, date):
@@ -4498,6 +9220,62 @@ class MainWindow(QMainWindow):
         self._orbit_win.raise_()
         self._orbit_win.activateWindow()
 
+    def _open_mc_window(self):
+        # Keep one editable MC window per main-window session.  Repeated clicks
+        # on View → Monte Carlo Morphology should reveal/raise the existing
+        # window instead of creating another copy with diverging inputs.
+        existing = getattr(self, '_mc_win', None)
+        if existing is not None:
+            try:
+                ages_now = self.ctrl._parse_floats(self.ctrl.age_str.text())
+                existing.update_fp_guidance(
+                    ages_now, float(self.ctrl.dominant_age.value()))
+                # Restore a minimized window before bringing it to front.
+                if existing.windowState() & Qt.WindowState.WindowMinimized:
+                    existing.setWindowState(
+                        existing.windowState() & ~Qt.WindowState.WindowMinimized)
+                existing.show()
+                existing.raise_()
+                existing.activateWindow()
+                return
+            except RuntimeError:
+                # WA_DeleteOnClose can leave a stale Python wrapper briefly.
+                self._mc_win = None
+
+        el = self._active_comet_el()
+        if not el:
+            QMessageBox.warning(self, "No Comet",
+                                "Select or fetch a comet first.")
+            return
+        obs_jd  = self._current_obs_jd()
+        betas   = self.ctrl._parse_floats(self.ctrl.beta_str.text())
+        ages    = self.ctrl._parse_floats(self.ctrl.age_str.text())
+        # Keep the MC/F-P upper age synchronized with the actual synchrone
+        # list.  The hidden main-panel widget is only a compatibility carrier.
+        max_age = max(ages) if ages else self.ctrl.max_age.value()
+        # Same parent=None reasoning as OrbitWindow/LCWindow (see their
+        # comments) — keeps this non-modal window from getting perma-
+        # pinned above MainWindow by the window manager. Stored on self
+        # to avoid a garbage-collection crash, same as those two.
+        win = MCWindow(el, obs_jd, beta_values=betas, max_age=max_age,
+                       fp_sync_ages=ages,
+                       fp_dominant_age=float(self.ctrl.dominant_age.value()),
+                       fp_model=self._model, parent=None,
+                       main_window=self)
+        self._mc_win = win
+
+        # Clear the reference only when this exact window is destroyed.  This
+        # makes the next menu click create a fresh instance after the user has
+        # genuinely closed the previous one.
+        def _forget_mc_window(*_args, _win=win):
+            if getattr(self, '_mc_win', None) is _win:
+                self._mc_win = None
+        win.destroyed.connect(_forget_mc_window)
+
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
     def _save_png(self):
         if not self._model:
             QMessageBox.information(self, "No Model", "Compute a model first.")
@@ -4505,7 +9283,9 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Plot", "", "PNG Image (*.png);;PDF (*.pdf)")
         if path:
-            self.canvas.fig.savefig(path, dpi=200, bbox_inches="tight",
+            # 300 dpi = standard print/publication minimum for the PNG path;
+            # the PDF option is vector and prints crisp at any size regardless.
+            self.canvas.fig.savefig(path, dpi=300, bbox_inches="tight",
                                     facecolor=self.canvas.fig.get_facecolor())
             self.status.showMessage(f"Saved → {path}", 4000)
 
@@ -4529,6 +9309,83 @@ class MainWindow(QMainWindow):
                         w.writerow(["synchrone",s["age"],f"{xi:.8f}",f"{eta:.8f}"])
         self.status.showMessage(f"CSV exported → {path}", 4000)
 
+    # ── Update check (v3.1) ──────────────────────────────────────────────
+    # GitHub Releases-based update notification. Two entry points:
+    #   _check_for_update_silent() — fired once 3s after startup (see
+    #       __init__). Completely silent unless there's a genuine newer
+    #       release AND the user hasn't already dismissed that exact
+    #       version via "Skip this version" (remembered in QSettings).
+    #   _check_for_update_manual() — Help > Check for Updates…, always
+    #       gives feedback either way ("up to date" or the update dialog),
+    #       ignoring any previously-skipped version since this is an
+    #       explicit user action.
+    # Both run cta.check_for_update() in UpdateCheckWorker (background
+    # thread) — it never raises and never blocks the UI; see that
+    # function's docstring for the full list of silent-failure cases
+    # (no network, GitHub's 60 req/hr unauthenticated rate limit, no
+    # releases yet, already current).
+    def _update_settings(self) -> QSettings:
+        return QSettings("MPC-O58", "CometTailAnalyzer")
+
+    def _check_for_update_silent(self):
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return
+        self._update_worker = UpdateCheckWorker()
+        self._update_worker.finished.connect(self._on_update_check_silent)
+        self._update_worker.start()
+
+    def _on_update_check_silent(self, info: dict | None):
+        if not info:
+            return   # up to date, offline, or rate-limited — say nothing
+        skipped = self._update_settings().value("skipped_update_version", "")
+        if skipped == info["latest"]:
+            return   # user already dismissed this exact version
+        self._show_update_dialog(info, manual=False)
+
+    def _check_for_update_manual(self):
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return
+        self.status.showMessage("Checking for updates…")
+        self._update_worker = UpdateCheckWorker()
+        self._update_worker.finished.connect(self._on_update_check_manual)
+        self._update_worker.start()
+
+    def _on_update_check_manual(self, info: dict | None):
+        if info:
+            self._show_update_dialog(info, manual=True)
+        else:
+            self.status.showMessage("", 0)
+            QMessageBox.information(
+                self, "Check for Updates",
+                f"You're up to date.\n\n"
+                f"Installed version: {cta.__version__}\n"
+                f"(Could also mean: offline, or GitHub's rate limit was hit — "
+                f"try again in a few minutes.)")
+
+    def _show_update_dialog(self, info: dict, manual: bool):
+        box = QMessageBox(self)
+        box.setWindowTitle("Update Available")
+        box.setIcon(QMessageBox.Icon.Information)
+        notes = info.get("notes") or ""
+        if len(notes) >= 500:
+            notes = notes.rstrip() + "…"
+        box.setText(
+            f"<b>Comet Tail Analyzer {info['tag']}</b> is available "
+            f"(you have {cta.__version__}).")
+        if notes:
+            box.setInformativeText(notes)
+        btn_open = box.addButton("Open Release Page", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        btn_skip = None
+        if not manual:
+            btn_skip = box.addButton("Skip This Version", QMessageBox.ButtonRole.DestructiveRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_open:
+            webbrowser.open(info["url"])
+        elif btn_skip is not None and clicked is btn_skip:
+            self._update_settings().setValue("skipped_update_version", info["latest"])
+
     def _about(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("About Comet Tail Analyzer")
@@ -4551,7 +9408,7 @@ class MainWindow(QMainWindow):
             "COMET TAIL ANALYZER</div>"
             "<div style='font-size:10px;color:#2a5070;letter-spacing:3px;margin-top:4px'>"
             "FINSON–PROBSTEIN DUST TAIL MODEL  ·  1968</div>"
-            "<div style='font-size:11px;color:#3a6090;margin-top:8px'>Version 3.0  ·  2026</div>"
+            "<div style='font-size:11px;color:#3a6090;margin-top:8px'>Version 3.1  ·  2026</div>"
             "</div>")
         vb.addWidget(banner)
 
@@ -4647,7 +9504,10 @@ def main():
     apply_theme("dark", app)
 
     win = MainWindow()
-    win.show()
+    # Maximized keeps the normal title bar/taskbar behavior while using the
+    # full available desktop area. This is intentionally not borderless
+    # fullscreen, so minimize/restore and multi-window work remain normal.
+    win.showMaximized()
     sys.exit(app.exec())
 
 if __name__ == "__main__":
