@@ -4,7 +4,7 @@
 =============================================================================
   comet_tail_analyzer.py  —  Comet Tail Analyzer (CTA) Physics Engine
   Finson–Probstein + Monte Carlo Dust Tail Model
-  Version 3.1   ·   Teerasak Thaluang (MPC O51/O58)
+  Version 3.1.1 ·   Teerasak Thaluang (MPC O51/O58)
 
   SPDX-License-Identifier: MIT
   © 2024–2026 Teerasak Thaluang. See LICENSE for full terms.
@@ -28,6 +28,7 @@
     Thaluang, T. (2026). RNAAS, doi:10.3847/2515-5172/ae6f90
 =============================================================================
   Changelog:
+    v3.1.1 • GUI hotfix release: no change to F-P or Monte Carlo physics.
     v3.1  • GUI workflow synchronization: F-P maximum dust age is derived
             from the largest listed synchrone; physics equations unchanged.
     v3.1  • GUI workflow synchronization: Q(t) preview is now embedded in
@@ -289,7 +290,7 @@
 
 from __future__ import annotations
 
-__version__ = "3.1"
+__version__ = "3.1.1"
 # NOTE (v3.1): was stale at "2.5" — left out of sync with the docstring
 # header above for at least 3 releases. Bumped to match the header here
 # because check_for_update() (below) now needs ONE authoritative version
@@ -538,53 +539,117 @@ GITHUB_REPO = "MPC-O58/Comet-Tail-Analyzer"
 
 
 def _version_tuple(v: str):
-    """'v3.0.2' / '3.0.2' / '3.1' → (3,0,2) / (3,1). None if unparseable.
-    Tuple (not string) comparison so '3.10' correctly sorts after '3.2'
-    — a plain string compare would get that backwards."""
+    """Parse a CTA semantic version into a normalized ``(major, minor, patch)`` tuple.
+
+    Accepted examples include ``v3.1``, ``3.1.1`` and ``CTA-v3.2.0``.  The
+    parser deliberately ignores unrelated numbers elsewhere in a tag, so a
+    date or build number cannot accidentally outrank the real application
+    version.  Missing patch numbers are normalized to zero.
+    """
     if not v:
         return None
-    nums = re.findall(r'\d+', v)
-    return tuple(int(n) for n in nums) if nums else None
+    match = re.search(r'(?<!\d)v?(\d+)\.(\d+)(?:\.(\d+))?', str(v), re.I)
+    if not match:
+        return None
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch or 0)
 
 
-def check_for_update(current_version: str | None = None,
+def get_update_status(current_version: str | None = None,
                       repo: str = GITHUB_REPO,
-                      timeout: float = 5.0) -> dict | None:
-    """
-    Check GitHub Releases for a version newer than current_version
-    (defaults to this module's own __version__).
+                      timeout: float = 7.0) -> dict:
+    """Return a diagnostic GitHub Releases update-check result.
 
-    Returns None if: no network, GitHub rate-limited (60 req/hr
-    unauthenticated — hit this during dev testing, so it WILL happen to
-    real users occasionally), repo has no releases, the tag can't be
-    parsed as a version, or the latest tag is <= current_version.
+    The result always contains ``status`` with one of:
 
-    On a genuine newer release, returns:
-        dict(latest='3.1', tag='v3.1',
-             url='https://github.com/<repo>/releases/tag/v3.1',
-             notes='<first part of the release-notes body>')
+    ``"update"``
+        A newer stable GitHub release exists.
+    ``"current"``
+        The installed version is equal to or newer than the latest release.
+    ``"error"``
+        The check could not be completed.  This is non-fatal and includes a
+        short user-facing ``reason`` suitable for the manual update dialog.
+
+    ``releases/latest`` excludes drafts and prereleases, which is the intended
+    behaviour for normal CTA users.  This function never raises.
     """
+    current_text = current_version or __version__
+    current = _version_tuple(current_text)
+    if current is None:
+        return dict(status='error', reason=f"Invalid installed version: {current_text}")
+
     try:
         import requests
+        headers = dict(_HTTP_HEADERS)
+        headers.update({
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+        })
         resp = requests.get(
             f"https://api.github.com/repos/{repo}/releases/latest",
-            headers=_HTTP_HEADERS, timeout=timeout)
+            headers=headers, timeout=timeout)
+
+        if resp.status_code == 404:
+            return dict(status='error', reason='No published GitHub release was found.')
+        if resp.status_code == 403:
+            remaining = resp.headers.get('X-RateLimit-Remaining', '')
+            reason = 'GitHub API access was denied.'
+            if remaining == '0':
+                reason = 'GitHub API rate limit reached. Please try again later.'
+            return dict(status='error', reason=reason)
         if resp.status_code != 200:
-            return None
-        data = resp.json()
-        tag = data.get('tag_name', '')
-        latest  = _version_tuple(tag)
-        current = _version_tuple(current_version or __version__)
-        if latest is None or current is None or latest <= current:
-            return None
-        return dict(
+            return dict(status='error', reason=f'GitHub returned HTTP {resp.status_code}.')
+
+        try:
+            data = resp.json()
+        except Exception:
+            return dict(status='error', reason='GitHub returned an invalid response.')
+
+        tag = str(data.get('tag_name', '') or '')
+        latest = _version_tuple(tag)
+        if latest is None:
+            return dict(status='error', reason=f'Unrecognized release tag: {tag or "(empty)"}')
+
+        base = dict(
             latest='.'.join(map(str, latest)),
             tag=tag,
             url=data.get('html_url') or f'https://github.com/{repo}/releases/latest',
             notes=(data.get('body') or '').strip()[:500],
+            installed='.'.join(map(str, current)),
         )
-    except Exception:
-        return None
+        if latest > current:
+            base['status'] = 'update'
+        else:
+            base['status'] = 'current'
+        return base
+
+    except Exception as exc:
+        name = exc.__class__.__name__
+        if name == 'SSLError':
+            reason = 'SSL certificate verification failed.'
+        elif name in ('ProxyError',):
+            reason = 'The configured network proxy could not be reached.'
+        elif name in ('ConnectTimeout', 'ReadTimeout', 'Timeout'):
+            reason = 'The GitHub request timed out.'
+        elif name in ('ConnectionError',):
+            reason = 'GitHub could not be reached from this computer.'
+        else:
+            reason = f'Update check failed: {exc}' if str(exc) else f'Update check failed ({name}).'
+        return dict(status='error', reason=reason)
+
+
+def check_for_update(current_version: str | None = None,
+                      repo: str = GITHUB_REPO,
+                      timeout: float = 7.0) -> dict | None:
+    """Backward-compatible helper returning only genuine update information.
+
+    Existing callers that expect ``None`` when no update is available can keep
+    using this function.  New GUI code should use :func:`get_update_status` so
+    a manual check can distinguish "up to date" from a network/API failure.
+    """
+    result = get_update_status(current_version=current_version,
+                               repo=repo, timeout=timeout)
+    return result if result.get('status') == 'update' else None
 
 
 def _normalize_comet_desig(designation: str):

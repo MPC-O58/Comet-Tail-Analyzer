@@ -4,7 +4,7 @@
 =============================================================================
   CometTailGUI.py  —  Comet Tail Analyzer (CTA)
   Finson–Probstein + Monte Carlo Dust Tail Model
-  Version 3.1   ·   Teerasak Thaluang (MPC O51/O58)
+  Version 3.1.1 ·   Teerasak Thaluang (MPC O51/O58)
   Native Desktop Application (PyQt6 + Matplotlib)
 
   SPDX-License-Identifier: MIT
@@ -26,6 +26,16 @@
     Thaluang, T. (2026). RNAAS, doi:10.3847/2515-5172/ae6f90
 =============================================================================
   Changelog:
+    v3.1.1 • BUG FIX: CLEAR ALL MODELS now resets the hidden MC-coupled
+             F-P ejection state to the classical zero-velocity baseline,
+             restores F-P curve visibility, returns presentation to Analysis
+             Overlay, and invalidates the current MC result. This prevents a
+             later F-P run from silently inheriting the previous MC velocity
+             or contour-only display state.
+           • PUBLICATION AXES: Projected-distance axes are now nucleus-centred
+             in kilometres, use right-positive X and up-positive Y, guarantee
+             a visible 0 tick at the nucleus whenever it lies inside the
+             displayed frame, and use readable scientific tick labels.
     v3.1  • NEW: MC Display now provides Analysis Overlay, Contour
             Comparison, and Publication Figure presentation modes.
             Contour-only modes suppress the image background and unrelated
@@ -555,7 +565,7 @@
 =============================================================================
 """
 
-__version__ = "3.1"
+__version__ = "3.1.1"
 # Runtime patch: partial COBS coverage blocks auto-recommendation, not user-selected MC runs.
 
 import sys, os, warnings, csv, webbrowser, logging
@@ -571,7 +581,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QFileDialog, QStatusBar, QProgressBar, QMessageBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QTextEdit,
     QDialog, QDialogButtonBox, QFormLayout, QSizePolicy, QMenuBar,
-    QMenu, QRadioButton, QButtonGroup,
+    QMenu, QRadioButton, QButtonGroup, QToolBar,
 )
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal, QTimer, QSize, QSettings,
@@ -1169,19 +1179,24 @@ class FetchWorker(QThread):
 
 
 class UpdateCheckWorker(QThread):
-    """v3.1 — runs cta.check_for_update() off the UI thread. cta.check_
-    for_update() itself never raises (see its docstring) and returns
-    either an update-info dict or None; this worker just relays that
-    straight through `finished`. There is deliberately no `error`
-    signal — a failed/rate-limited update check is not an error worth
-    surfacing to the user, just a None result."""
-    finished = pyqtSignal(object)   # dict (update available) or None
+    """Run the GitHub Releases update check without blocking the GUI.
+
+    The worker returns a diagnostic dictionary with status ``update``,
+    ``current`` or ``error``. Silent startup checks ignore non-update results,
+    while an explicit manual check can now distinguish an up-to-date install
+    from a network, SSL, API, or rate-limit failure.
+    """
+    finished = pyqtSignal(object)
 
     def run(self):
         try:
-            result = cta.check_for_update()
-        except Exception:
-            result = None   # belt-and-suspenders; check_for_update() already does this
+            if hasattr(cta, "get_update_status"):
+                result = cta.get_update_status()
+            else:
+                legacy = cta.check_for_update()
+                result = legacy or {"status": "current", "installed": cta.__version__}
+        except Exception as exc:
+            result = {"status": "error", "reason": str(exc) or "Unknown update-check error."}
         self.finished.emit(result)
 
 
@@ -1446,6 +1461,125 @@ class PlotCanvas(QWidget):
 
         self.canvas.draw_idle()
 
+    # ── Publication projected-distance axes ─────────────────────────────
+    @staticmethod
+    def _nice_projected_tick_values(vmin: float, vmax: float,
+                                    target_intervals: int = 5) -> list[float]:
+        """Return readable kilometre ticks and include zero when visible.
+
+        The plot data stay in image-pixel coordinates so the image, WCS, and
+        MC/F-P overlay geometry are not modified.  This helper instead builds
+        a fixed set of physically labelled ticks around the nucleus.  Using a
+        nucleus-centred locator is important because Matplotlib's default
+        pixel locator does not guarantee that the nucleus pixel will be a
+        tick, even though its projected coordinate must be exactly 0 km.
+        """
+        lo, hi = sorted((float(vmin), float(vmax)))
+        span = hi - lo
+        if not np.isfinite(span) or span <= 0:
+            return [0.0]
+
+        raw = span / max(int(target_intervals), 1)
+        power = 10.0 ** np.floor(np.log10(max(raw, 1e-12)))
+        fraction = raw / power
+        if fraction <= 1.0:
+            factor = 1.0
+        elif fraction <= 2.0:
+            factor = 2.0
+        elif fraction <= 2.5:
+            factor = 2.5
+        elif fraction <= 5.0:
+            factor = 5.0
+        else:
+            factor = 10.0
+        step = factor * power
+
+        start = np.ceil((lo - 1e-12 * step) / step) * step
+        stop  = np.floor((hi + 1e-12 * step) / step) * step
+        if stop >= start:
+            count = int(round((stop - start) / step)) + 1
+            ticks = [float(start + i * step) for i in range(max(count, 0))]
+        else:
+            ticks = []
+
+        # The nucleus coordinate is the physical origin.  Always include it
+        # when it falls in the visible crop, even if the automatic nice-step
+        # sequence would otherwise skip it.
+        if lo <= 0.0 <= hi and not any(abs(v) <= step * 1e-8 for v in ticks):
+            ticks.append(0.0)
+        ticks = sorted(v for v in ticks if lo - step*1e-8 <= v <= hi + step*1e-8)
+        return ticks or ([0.0] if lo <= 0.0 <= hi else [lo, hi])
+
+    @staticmethod
+    def _format_projected_km_tick(value: float) -> str:
+        """Format a projected-distance tick using compact ×10 superscripts."""
+        value = float(value)
+        if not np.isfinite(value) or abs(value) < 0.5:
+            return "0"
+
+        av = abs(value)
+        if av >= 1.0e4:
+            exp = int(np.floor(np.log10(av)))
+            coeff = value / (10.0 ** exp)
+            if abs(coeff - round(coeff)) < 1e-9:
+                coeff_text = str(int(round(coeff)))
+            else:
+                coeff_text = f"{coeff:.1f}".rstrip("0").rstrip(".")
+            coeff_text = coeff_text.replace("-", "−")
+            superscript = str(exp).translate(str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹"))
+            return f"{coeff_text}×10{superscript}"
+
+        if av >= 100.0:
+            text = f"{value:.0f}"
+        elif av >= 10.0:
+            text = f"{value:.1f}".rstrip("0").rstrip(".")
+        else:
+            text = f"{value:.2f}".rstrip("0").rstrip(".")
+        return text.replace("-", "−")
+
+    def _apply_projected_km_axes(self, white_canvas: bool) -> None:
+        """Apply nucleus-centred projected-kilometre ticks to an image plot.
+
+        Sign convention follows the requested publication layout:
+          X < 0 left of the nucleus; X > 0 right of the nucleus.
+          Y > 0 above the nucleus; Y < 0 below the nucleus.
+        """
+        km_per_px = float(self.au_per_px) * 149597870.7
+        if not np.isfinite(km_per_px) or km_per_px <= 0:
+            return
+
+        x0_px, x1_px = self.ax.get_xlim()
+        y0_px, y1_px = self.ax.get_ylim()
+        x0_km = (x0_px - self.nuc_x) * km_per_px
+        x1_km = (x1_px - self.nuc_x) * km_per_px
+        y0_km = (self.nuc_y - y0_px) * km_per_px
+        y1_km = (self.nuc_y - y1_px) * km_per_px
+
+        x_ticks_km = self._nice_projected_tick_values(x0_km, x1_km)
+        y_ticks_km = self._nice_projected_tick_values(y0_km, y1_km)
+
+        x_pairs = sorted(
+            ((self.nuc_x + value / km_per_px, value) for value in x_ticks_km),
+            key=lambda item: item[0])
+        y_pairs = sorted(
+            ((self.nuc_y - value / km_per_px, value) for value in y_ticks_km),
+            key=lambda item: item[0])
+
+        self.ax.set_xticks([p for p, _ in x_pairs])
+        self.ax.set_xticklabels(
+            [self._format_projected_km_tick(v) for _, v in x_pairs],
+            fontfamily=MF, fontsize=8)
+        self.ax.set_yticks([p for p, _ in y_pairs])
+        self.ax.set_yticklabels(
+            [self._format_projected_km_tick(v) for _, v in y_pairs],
+            fontfamily=MF, fontsize=8)
+
+        axis_color = "black" if white_canvas else "#3a6080"
+        self.ax.set_xlabel("Distance to nucleus projected (km)",
+                           color=axis_color, fontfamily=MF)
+        self.ax.set_ylabel("Distance to nucleus projected (km)",
+                           color=axis_color, fontfamily=MF)
+
     # ── Main draw ─────────────────────────────────────────────────────────
     def draw_model(self, model, img_arr=None, fixed_xlim=None, fixed_ylim=None):
         # Capture the CURRENT view — whatever a previous draw_model() call
@@ -1467,8 +1601,13 @@ class PlotCanvas(QWidget):
         self.ax.clear()
         overlay = img_arr is not None
         view_style = self._vis.get("mc_view_style", "analysis")
-        contour_only = view_style in ("contour", "publication")
-        publication = view_style == "publication"
+        # Contour-only presentation is meaningful only when an MC result is
+        # actually present.  After CLEAR ALL MODELS, a new F-P run must return
+        # to a normal diagnostic display rather than remain silently hidden by
+        # the last MC publication preset.
+        contour_only = (view_style in ("contour", "publication") and
+                        bool(self.mc_contours) and
+                        bool(self._vis.get("mc_contour", False)))
         background_mode = self._vis.get(
             "mc_background", "white" if contour_only else "image")
         white_canvas = background_mode == "white"
@@ -2179,23 +2318,13 @@ class PlotCanvas(QWidget):
                 self.ax.set_xlim(0, w_img)
                 self.ax.set_ylim(h_img, 0)
 
-            # Publication coordinate display.  The data remain in pixel
-            # coordinates so the WCS/overlay geometry is untouched; only
-            # the tick labels are converted to projected kilometres at the
-            # comet distance.  Positive X points left and positive Y points
-            # up, matching the usual north-up/east-left presentation.
+            # Publication coordinate display.  Data remain in image pixels,
+            # but the fixed tick locations are generated in physical units
+            # around the nucleus.  This guarantees a 0-km tick at the nucleus
+            # whenever it lies inside the visible crop.
             coord_mode = self._vis.get("mc_coordinates", "pixels")
             if coord_mode == "projected_km":
-                km_per_px = float(self.au_per_px) * 149597870.7
-                self.ax.xaxis.set_major_formatter(FuncFormatter(
-                    lambda x, _pos: f"{(self.nuc_x - x) * km_per_px:.0f}"))
-                self.ax.yaxis.set_major_formatter(FuncFormatter(
-                    lambda y, _pos: f"{(self.nuc_y - y) * km_per_px:.0f}"))
-                axis_color = "black" if white_canvas else "#3a6080"
-                self.ax.set_xlabel("Projected X offset (km)", color=axis_color,
-                                   fontfamily=MF)
-                self.ax.set_ylabel("Projected Y offset (km)", color=axis_color,
-                                   fontfamily=MF)
+                self._apply_projected_km_axes(white_canvas)
             elif coord_mode == "hide":
                 self.ax.set_axis_off()
 
@@ -2686,13 +2815,17 @@ class ControlPanel(QScrollArea):
         self.btn_clear_mc.setToolTip(
             "Clear all computed model results from the main canvas: "
             "Finson–Probstein curves/vectors and Monte Carlo contours. "
-            "The loaded image, image isophotes, and editable input values "
-            "are preserved.")
+            "The loaded image and editable MC inputs are preserved; hidden "
+            "MC-coupled F-P velocity is reset to the zero-velocity baseline.")
         self.btn_clear_mc.setEnabled(False)
         self.btn_clear_mc.clicked.connect(
-            lambda: getattr(self.window(), "_clear_all_models")())
+            lambda: getattr(self.window(), "_confirm_clear_all_models")())
         gmc.addWidget(self.btn_clear_mc)
         vbox.addWidget(grp_mc_overlay)
+        # v3.1.1: model actions now live in the dedicated Model menu and
+        # compact toolbar. Keep the button object for backward-compatible
+        # signal/state handling, but remove the duplicate left-panel section.
+        grp_mc_overlay.setVisible(False)
 
         # ── Observed Ephemeris Override (also in dialog) ──────────────────
         self.chk_use_obs = QCheckBox("★ Ephemeris override active")
@@ -3338,6 +3471,28 @@ class ControlPanel(QScrollArea):
         velocity the Monte Carlo population is using, without it being
         keyed in twice in two different places."""
         self._current_ejection = dict(d)
+
+    def reset_ejection_params(self):
+        """Return the hidden F-P ejection state to classical F-P defaults.
+
+        MC Run synchronizes its velocity law into this internal state.  Because
+        those values are intentionally not duplicated as visible controls on
+        the main panel, preserving them after CLEAR ALL MODELS would leave an
+        invisible, stale assumption in the next F-P run.
+        """
+        self._current_ejection = dict(
+            v_R0=0.0, v_T0=0.0, v_N0=0.0, gamma=0.0, m_exp=0.0)
+
+    def reset_mc_presentation(self):
+        """Return the main canvas to the normal analysis presentation."""
+        self._mc_style.update(dict(
+            lw=1.2, alpha=0.95, info_box=True,
+            view_style="analysis", background="image", coordinates="pixels",
+            observed_show=True, observed_color=ISOPHOTE_COLOR,
+            observed_lw=0.6, observed_alpha=0.75, observed_ls="-",
+            model_color="#ff3399", model_ls="--",
+            show_legend=True, show_title=True, show_compass=True,
+            grayscale_safe=False))
 
     def get_vis(self):
         mc = dict(self._mc_style)
@@ -4391,6 +4546,18 @@ class MCWindow(QDialog):
         self._loaded_input_profile = {}
         self._loaded_input_comet = ""
         self._worker     = None
+        # Async-result generation. Clear All increments this value so a late
+        # Monte Carlo worker cannot restore a result after it was cleared.
+        self._run_generation = 0
+
+        # First-use guided workflow.  The tab content is always available, but
+        # new users start on F-P Guide with Back/Next navigation.  After one
+        # successful MC run (or Skip guide), later sessions open directly on
+        # Simulation.  This is a UI preference only and never changes physics.
+        self._guide_settings = QSettings("MPC-O58", "CometTailAnalyzer")
+        guide_done_raw = self._guide_settings.value("mc_guided_completed", False)
+        self._guided_first_use = str(guide_done_raw).strip().lower() not in (
+            "1", "true", "yes", "on")
 
         self.setWindowTitle(f"🎲 Monte Carlo Morphology — {comet_el.get('name','Comet')}")
         self.setMinimumSize(940, 720)
@@ -4420,6 +4587,27 @@ class MCWindow(QDialog):
         note.setWordWrap(True)
         note.setStyleSheet(f"color:{T['text_muted']}; font-size:9px; padding:0 4px 4px 4px;")
         vbox.addWidget(note)
+
+        # First-use guide banner. Users can skip it without changing any input.
+        self.guide_banner = QFrame()
+        self.guide_banner.setStyleSheet(
+            "QFrame { background:#102338; border:1px solid #4a8adf; border-radius:6px; }"
+            "QLabel { border:none; background:transparent; }")
+        guide_banner_l = QHBoxLayout(self.guide_banner)
+        guide_banner_l.setContentsMargins(10, 7, 10, 7)
+        self.lbl_guide_banner = QLabel(
+            "Guided setup: review the F-P starting range, continue to Simulation, "
+            "then run the model. Display is optional and can be adjusted afterward.")
+        self.lbl_guide_banner.setWordWrap(True)
+        self.lbl_guide_banner.setStyleSheet("color:#eaf4ff; font-size:10px;")
+        self.btn_skip_guide = QPushButton("Skip guide")
+        self.btn_skip_guide.setMaximumWidth(100)
+        self.btn_skip_guide.setAutoDefault(False)
+        self.btn_skip_guide.setDefault(False)
+        guide_banner_l.addWidget(self.lbl_guide_banner, 1)
+        guide_banner_l.addWidget(self.btn_skip_guide)
+        self.guide_banner.setVisible(self._guided_first_use)
+        vbox.addWidget(self.guide_banner)
 
         def _dspin(val, lo, hi, decimals=4, step=0.001, suffix=""):
             w = QDoubleSpinBox()
@@ -4704,16 +4892,17 @@ class MCWindow(QDialog):
             "ε=1 follows the usual cosine-weighted sunward emission.\n"
             "Higher values concentrate ejection closer to the subsolar direction.")
 
+        # The physical Sun direction is always evaluated at each particle's
+        # emission time. Keep the legacy combo as a hidden state carrier so
+        # older .mcin files still load, but do not expose the observation-time
+        # shortcut in the standard workflow.
         self.cmb_sunward_reference = QComboBox()
         self.cmb_sunward_reference.addItems([
             "Emission time — physical",
             "Observation time — legacy diagnostic",
         ])
-        self.cmb_sunward_reference.setToolTip(
-            "Which Sun-comet line defines the 3-D sunward hemisphere.\n"
-            "Emission time recomputes the Sun direction at each particle's\n"
-            "release epoch. This is the physical default.\n"
-            "Observation time is the old CTA shortcut, kept only for A/B tests.")
+        self.cmb_sunward_reference.setCurrentIndex(0)
+        self.cmb_sunward_reference.hide()
 
         self.sp_sunward_cone = _sp(_dspin(90.0, 0.0, 90.0, 1, 5.0, "°"), W_MED)
         self.sp_sunward_cone.setToolTip(
@@ -4721,18 +4910,51 @@ class MCWindow(QDialog):
             "90° = full physical sunward hemisphere.\n"
             "Smaller values are diagnostic/fitting aids, not the default model.")
 
-        self.chk_projected_sunward = QCheckBox("Require apparent Sun direction on image")
+        sunward_note = QLabel(
+            "Dust is emitted relative to the Sun direction at each particle's "
+            "emission time (physical default).")
+        sunward_note.setWordWrap(True)
+        sunward_note.setStyleSheet(f"color:{T['text_muted']}; font-size:9px;")
+
+        self.chk_projected_sunward = QCheckBox(
+            "Projection gate: retain particles projected toward the apparent Sun")
         self.chk_projected_sunward.setChecked(False)
         self.chk_projected_sunward.setToolTip(
-            "OFF: physical 3-D sunward hemisphere only. Recommended default.\n"
-            "ON: additionally require the initial ejection direction to project\n"
-            "toward the apparent Sun direction on the current image. This is an\n"
-            "image-plane diagnostic constraint, not a new physical force.")
+            "Diagnostic only. This image-plane filter can create or enhance an\n"
+            "apparent sunward structure. It is not a physical force and should\n"
+            "not be interpreted as a measured emission constraint.")
 
-        swg.addWidget(QLabel("cos(z) exponent ε"), 0, 0); swg.addWidget(self.sp_sunward_expocos, 0, 1)
-        swg.addWidget(QLabel("Sunward reference"), 0, 2); swg.addWidget(self.cmb_sunward_reference, 0, 3)
-        swg.addWidget(QLabel("Cone half-angle"), 1, 0); swg.addWidget(self.sp_sunward_cone, 1, 1)
-        swg.addWidget(self.chk_projected_sunward, 1, 2, 1, 2)
+        # Retained internally for backward compatibility with older .mcin
+        # files, but intentionally hidden from the standard v3.1.1 UI. The
+        # projection gate is a diagnostic image-plane filter rather than a
+        # physical emission parameter and may be reconsidered in a later
+        # advanced/research workflow.
+        self.grp_projection_diag = QGroupBox("Advanced projection diagnostics")
+        self.grp_projection_diag.setCheckable(True)
+        self.grp_projection_diag.setChecked(False)
+        self.grp_projection_diag.setVisible(False)
+        diag_v = QVBoxLayout(self.grp_projection_diag)
+        diag_v.setContentsMargins(8, 5, 8, 7)
+        diag_v.addWidget(self.chk_projected_sunward)
+        diag_warn = QLabel(
+            "Diagnostic only — keep Off for normal physical modeling. "
+            "Any use is recorded in the MC report.")
+        diag_warn.setWordWrap(True)
+        diag_warn.setStyleSheet("color:#ffb020; font-size:9px;")
+        diag_v.addWidget(diag_warn)
+        self.chk_projected_sunward.setVisible(False)
+        diag_warn.setVisible(False)
+
+        def _toggle_projection_diag(opened):
+            self.chk_projected_sunward.setVisible(bool(opened))
+            diag_warn.setVisible(bool(opened))
+        self.grp_projection_diag.toggled.connect(_toggle_projection_diag)
+
+        swg.addWidget(QLabel("cos(z) exponent ε"), 0, 0)
+        swg.addWidget(self.sp_sunward_expocos, 0, 1)
+        swg.addWidget(QLabel("Cone half-angle"), 0, 2)
+        swg.addWidget(self.sp_sunward_cone, 0, 3)
+        swg.addWidget(sunward_note, 1, 0, 1, 4)
         self.sunward_group.setVisible(False)
         dir_v.addWidget(self.sunward_group)
 
@@ -5598,12 +5820,10 @@ class MCWindow(QDialog):
 
         _on_dmdt_mode()
 
-        # Track review/confirmation tab visits. Q(t) now lives in Simulation.
-        tabs.currentChanged.connect(self._on_mc_tab_changed)
-
         tabs.addTab(page_guide, "1 · F-P Guide")
         tabs.addTab(page_sim,   "2 · Simulation")
         tabs.addTab(page_disp,  "3 · Display")
+        tabs.currentChanged.connect(self._on_mc_tab_changed)
 
         tabs_scroll = QScrollArea()
         tabs_scroll.setWidgetResizable(True)
@@ -5611,21 +5831,59 @@ class MCWindow(QDialog):
         tabs_scroll.setFrameShape(QFrame.Shape.NoFrame)
         vbox.addWidget(tabs_scroll, 1)
 
-        # ── Run button (full width) ──────────────────────────────────────
-        self.btn_run = QPushButton("▶  Run Monte Carlo  →  contour appears on main canvas")
-        # Run must always be an explicit click.  In a QDialog, enabled push
-        # buttons may otherwise become the default button after another
-        # control is applied, which makes the workflow look as if CTA has
-        # selected Run automatically.
+        # Guided Back/Next navigation. Tab headers remain directly clickable,
+        # but first-time users no longer need to discover the workflow by trial.
+        nav = QHBoxLayout()
+        self.btn_step_back = QPushButton("← Back")
+        self.btn_step_back.setAutoDefault(False)
+        self.btn_step_back.setDefault(False)
+        self.btn_step_back.clicked.connect(self._navigate_mc_back)
+        self.lbl_step = QLabel("Step 1 of 3 — F-P Guide")
+        self.lbl_step.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_step.setStyleSheet(
+            f"color:{T['text_value']}; font-size:10px; font-weight:600;")
+        self.btn_step_next = QPushButton("Next: Simulation →")
+        self.btn_step_next.setAutoDefault(False)
+        self.btn_step_next.setDefault(False)
+        self.btn_step_next.clicked.connect(self._navigate_mc_next)
+        nav.addWidget(self.btn_step_back)
+        nav.addStretch()
+        nav.addWidget(self.lbl_step)
+        nav.addStretch()
+        nav.addWidget(self.btn_step_next)
+        vbox.addLayout(nav)
+
+        # Run is intentionally shown only on Simulation. Display is optional
+        # and no longer has to be visited before a valid model can run.
+        self.btn_run = QPushButton(
+            "▶  Run Monte Carlo  (Ctrl+Enter)  →  contour appears on main canvas")
         self.btn_run.setAutoDefault(False)
         self.btn_run.setDefault(False)
-        self.btn_run.setMinimumHeight(36)
+        self.btn_run.setMinimumHeight(38)
         self.btn_run.setStyleSheet(
             "QPushButton { background:#1a6e2e; color:white; font-weight:bold; border-radius:4px; }"
             "QPushButton:hover { background:#21883a; }"
-            "QPushButton:disabled { background:#2a3a2e; color:#555; }")
+            "QPushButton:disabled { background:#2a3a2e; color:#666; }")
         self.btn_run.clicked.connect(self._run)
         vbox.addWidget(self.btn_run)
+
+        # Dialog-local shortcuts: Ctrl+Enter runs only when validation passes;
+        # Ctrl+R re-extracts contours only when a cached MC result exists.
+        self._act_run_mc_shortcut = QAction(self)
+        self._act_run_mc_shortcut.setShortcuts(["Ctrl+Return", "Ctrl+Enter"])
+        self._act_run_mc_shortcut.setShortcutContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._act_run_mc_shortcut.triggered.connect(self._run_mc_from_shortcut)
+        self.addAction(self._act_run_mc_shortcut)
+
+        self._act_reextract_shortcut = QAction(self)
+        self._act_reextract_shortcut.setShortcut("Ctrl+R")
+        self._act_reextract_shortcut.setShortcutContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._act_reextract_shortcut.triggered.connect(self._reextract_contours)
+        self.addAction(self._act_reextract_shortcut)
+
+        self.btn_skip_guide.clicked.connect(self._skip_guided_setup)
 
         # ── Progress bar + status (below run button) ─────────────────────
         self.progress = QProgressBar()
@@ -5667,7 +5925,34 @@ class MCWindow(QDialog):
         if MCWindow._saved_state is not None:
             self._apply_state(MCWindow._saved_state)
 
+        # v3.1.1 standardizes the sunward reference to the physical
+        # emission-time direction even when an older .mcin/state stored the
+        # legacy observation-time option.
+        self.cmb_sunward_reference.setCurrentIndex(0)
+        if self.chk_projected_sunward.isChecked():
+            self.grp_projection_diag.setChecked(True)
+
+        # Keep validation live while the user edits the physical inputs.
+        for w in (self.sp_r_min, self.sp_r_max, self.sp_gamma_size,
+                  self.sp_n, self.sp_max_age, self.sp_v0, self.sp_gamma,
+                  self.sp_mexp, self.sp_sunward_cone, self.sp_sunward_expocos,
+                  self.sp_lat_min, self.sp_lat_max, self.sp_lon_min,
+                  self.sp_lon_max, self.sp_period):
+            try:
+                w.valueChanged.connect(self._update_run_button_state)
+            except Exception:
+                pass
+        for rb in (self.rad_mode_isotropic, self.rad_mode_sunward,
+                   self.rad_mode_active, self.rad_dmdt_steady,
+                   self.rad_dmdt_cobs, self.rad_dmdt_manual):
+            rb.toggled.connect(self._update_run_button_state)
+        self.tbl_dmdt_manual.itemChanged.connect(self._update_run_button_state)
+        self.tbl_size_over_time.itemChanged.connect(self._update_run_button_state)
+        self.chk_size_table.toggled.connect(self._update_run_button_state)
+
+        self.tabs.setCurrentIndex(0 if self._guided_first_use else 1)
         self._update_qt_suggestion_summary_labels()
+        self._update_guided_navigation()
         self._update_run_button_state()
 
     def _update_fp_guidance_labels(self):
@@ -5880,46 +6165,169 @@ class MCWindow(QDialog):
         except Exception as exc:
             return False, f"Q(t) input check failed: {exc}"
 
-    def _update_run_button_state(self):
-        """Enable Run MC only when the workflow is ready.
+    def _validate_mc_inputs(self):
+        """Return ``(errors, warnings)`` for the current physical inputs.
 
-        For hand-entered sessions (no loaded .mcin), require the user to visit
-        all three tabs once. Q(t) is now embedded in Simulation, so there is
-        no separate preview tab to confirm. Loaded input files are
-        treated as editable templates and can be run once their selected Q(t)
-        source is ready.
+        Validation is based on actual values, not on whether a user happened
+        to click every tab. Display choices never block a scientifically valid
+        Monte Carlo run.
+        """
+        errors, warnings = [], []
+        try:
+            rmin = float(self.sp_r_min.value())
+            rmax = float(self.sp_r_max.value())
+            if not (rmin > 0.0 and rmax > 0.0):
+                errors.append("Grain radii must be positive.")
+            elif rmin >= rmax:
+                errors.append("Set r_min smaller than r_max.")
+
+            if float(self.sp_max_age.value()) <= 0.0:
+                errors.append("Release window must be greater than zero.")
+            if int(self.sp_n.value()) < 100:
+                errors.append("Particle count must be at least 100.")
+
+            if self.rad_mode_active.isChecked():
+                if self.sp_lat_min.value() > self.sp_lat_max.value():
+                    errors.append("Active-area latitude minimum exceeds maximum.")
+                if self.sp_period.value() <= 0.0:
+                    errors.append("Active-area rotation period must be positive.")
+
+            if self.chk_size_table.isChecked():
+                try:
+                    self._read_size_over_time_table()
+                except Exception as exc:
+                    errors.append(f"Size-over-time table: {exc}")
+
+            if self.rad_dmdt_manual.isChecked():
+                try:
+                    self._read_dmdt_manual_table()
+                except Exception as exc:
+                    errors.append(f"Manual dM/dt table: {exc}")
+
+            qt_ready, reason = self._qt_source_ready_for_run()
+            if not qt_ready:
+                errors.append(reason)
+            warning = getattr(self, '_qt_run_coverage_warning', '')
+            if warning:
+                warnings.append(warning)
+
+            if (self.rad_mode_sunward.isChecked() and
+                    self.grp_projection_diag.isChecked() and
+                    self.chk_projected_sunward.isChecked()):
+                warnings.append(
+                    "Advanced apparent-Sun projection gate is enabled; report it as a diagnostic filter.")
+        except Exception as exc:
+            errors.append(f"Input validation failed: {exc}")
+        return errors, warnings
+
+    def _set_mc_status_style(self, level="neutral"):
+        colors = {
+            "ready": "#60d394",
+            "warning": "#ffb020",
+            "error": "#ff6b6b",
+            "neutral": T['text_muted'],
+        }
+        if hasattr(self, 'lbl_status'):
+            self.lbl_status.setStyleSheet(
+                f"color:{colors.get(level, colors['neutral'])}; font-size:10px;")
+
+    def _update_run_button_state(self, *_args):
+        """Enable Run whenever the actual MC inputs are valid.
+
+        The former v3.1 behaviour required visiting all three tabs. That was a
+        discovery aid masquerading as validation and confused first-time users.
+        v3.1.1 validates values directly; Display is optional.
         """
         if not hasattr(self, 'btn_run'):
             return
-        loaded = bool(getattr(self, '_loaded_input_path', None))
-        if not loaded:
-            missing = [i + 1 for i in range(3) if i not in getattr(self, '_visited_tabs', {0})]
-            if missing:
+        try:
+            if self._worker is not None and self._worker.isRunning():
                 self.btn_run.setEnabled(False)
-                if hasattr(self, 'lbl_status'):
-                    self.lbl_status.setText(
-                        "Review all tabs before running MC. Missing tab(s): " +
-                        ", ".join(map(str, missing)))
+                self._set_mc_status_style("neutral")
                 return
+        except Exception:
+            pass
 
-        qt_ready, reason = self._qt_source_ready_for_run()
-        if not qt_ready:
+        errors, warnings = self._validate_mc_inputs()
+        if errors:
             self.btn_run.setEnabled(False)
             if hasattr(self, 'lbl_status'):
-                self.lbl_status.setText(reason)
+                shown = errors[:4]
+                more = len(errors) - len(shown)
+                text = "Complete the following:\n• " + "\n• ".join(shown)
+                if more > 0:
+                    text += f"\n• …and {more} more issue(s)"
+                self.lbl_status.setText(text)
+            self._set_mc_status_style("error")
+        else:
+            self.btn_run.setEnabled(True)
+            if warnings:
+                self.lbl_status.setText(
+                    "Ready to run Monte Carlo.\nNote: " + " ".join(warnings))
+                self._set_mc_status_style("warning")
+            else:
+                self.lbl_status.setText("Ready to run Monte Carlo.")
+                self._set_mc_status_style("ready")
+        self._update_guided_navigation()
+
+    def _update_guided_navigation(self):
+        if not hasattr(self, 'tabs') or not hasattr(self, 'btn_step_next'):
             return
-        self.btn_run.setEnabled(True)
-        warning = getattr(self, '_qt_run_coverage_warning', '')
-        if warning and hasattr(self, 'lbl_status'):
-            self.lbl_status.setText(warning)
+        idx = int(self.tabs.currentIndex())
+        labels = [
+            "Step 1 of 3 — F-P Guide",
+            "Step 2 of 3 — Simulation",
+            "Step 3 of 3 — Display (optional)",
+        ]
+        self.lbl_step.setText(labels[max(0, min(2, idx))])
+        self.btn_step_back.setEnabled(idx > 0)
+        if idx == 0:
+            self.btn_step_next.setText("Next: Simulation →")
+            self.btn_step_next.setEnabled(True)
+        elif idx == 1:
+            self.btn_step_next.setText("Next: Display (optional) →")
+            self.btn_step_next.setEnabled(True)
+        else:
+            self.btn_step_next.setText("Display is the final optional step")
+            self.btn_step_next.setEnabled(False)
+        self.btn_run.setVisible(idx == 1)
+
+    def _navigate_mc_back(self):
+        self.tabs.setCurrentIndex(max(0, self.tabs.currentIndex() - 1))
+
+    def _navigate_mc_next(self):
+        self.tabs.setCurrentIndex(min(2, self.tabs.currentIndex() + 1))
+
+    def _skip_guided_setup(self):
+        self._guided_first_use = False
+        self._guide_settings.setValue("mc_guided_completed", True)
+        self.guide_banner.hide()
+        self.tabs.setCurrentIndex(1)
+        self._update_guided_navigation()
+        self._update_run_button_state()
+
+    def _mark_guided_setup_complete(self):
+        if getattr(self, '_guided_first_use', False):
+            self._guided_first_use = False
+            self._guide_settings.setValue("mc_guided_completed", True)
+            if hasattr(self, 'guide_banner'):
+                self.guide_banner.hide()
+
+    def _run_mc_from_shortcut(self):
+        # Ctrl+Enter always means "review/run Simulation", never an accidental
+        # run from a hidden tab with unclear context.
+        if self.tabs.currentIndex() != 1:
+            self.tabs.setCurrentIndex(1)
+        self._update_run_button_state()
+        if self.btn_run.isEnabled():
+            self._run()
 
     def _on_mc_tab_changed(self, index: int):
         self._visited_tabs.add(int(index))
-        # Q(t) lives inside Simulation (tab index 1). Refresh opportunistically
-        # when that tab is opened and a non-steady source is selected.
         if index == 1 and (self.rad_dmdt_cobs.isChecked() or
                            self.rad_dmdt_manual.isChecked()):
             QTimer.singleShot(0, self._refresh_qt_plot)
+        self._update_guided_navigation()
         self._update_run_button_state()
 
     def _refresh_qt_plot(self):
@@ -6498,6 +6906,14 @@ class MCWindow(QDialog):
                             if w.item(r, c) is None:
                                 w.setItem(r, c, QTableWidgetItem(""))
 
+        # Backward compatibility: older .mcin files may store the legacy
+        # observation-time Sun reference. v3.1.1 always restores the physical
+        # emission-time reference while preserving the rest of the file.
+        if hasattr(self, "cmb_sunward_reference"):
+            self.cmb_sunward_reference.setCurrentIndex(0)
+        if hasattr(self, "grp_projection_diag") and hasattr(self, "chk_projected_sunward"):
+            self.grp_projection_diag.setChecked(self.chk_projected_sunward.isChecked())
+
     def _save_input_file(self):
         """Save the current visible MC inputs as a NEW .mcin JSON file.
 
@@ -6677,9 +7093,14 @@ class MCWindow(QDialog):
         self.lbl_status.setText(
             f"Loaded editable inputs from {path}" + suffix +
             " — edit any field, then Run MC or Save inputs as a new .mcin file.")
-        # Loaded .mcin files are editable templates; no need to force the
-        # four-tab manual review requirement.
+        # A loaded .mcin file is already a structured setup, so move directly
+        # to Simulation. It remains fully editable and is never run automatically.
         self._visited_tabs = {0, 1, 2}
+        self._guided_first_use = False
+        self.guide_banner.hide()
+        self.tabs.setCurrentIndex(1)
+        self._update_guided_navigation()
+        self._update_run_button_state()
 
         # Loading a file should never trigger MC generation.  It only restores
         # visible values.  If the restored template uses COBS+Afρ Q(t), fetch
@@ -7024,9 +7445,10 @@ class MCWindow(QDialog):
             else:
                 mode = f"Sunward cone {cone:.1f}° half-angle [cos(z) modulation]"
             lines.append(R("Mode:", mode))
-            lines.append(R("Sunward reference:", self.cmb_sunward_reference.currentText()))
+            lines.append(R("Sunward reference:", "Emission time — physical"))
             lines.append(R("cos(z) exponent ε:", f"{self.sp_sunward_expocos.value():.3g}"))
-            if self.chk_projected_sunward.isChecked():
+            if (self.grp_projection_diag.isChecked() and
+                    self.chk_projected_sunward.isChecked()):
                 lines.append(R("Sky-plane apparent-Sun gate:", "ON [diagnostic; not used as physical default]"))
         else:
             lines.append(R("Mode:", "Active area (rotating nucleus)"))
@@ -7146,7 +7568,7 @@ class MCWindow(QDialog):
         # ── Software citation ────────────────────────────────────────────
         lines.append("SOFTWARE")
         lines.append(dash)
-        lines.append("Thaluang, T. (2026). Comet Tail Analyzer (CTA) v3.1.")
+        lines.append("Thaluang, T. (2026). Comet Tail Analyzer (CTA) v3.1.1.")
         lines.append("RNAAS, doi:10.3847/2515-5172/ae6f90")
         lines.append("Portions ported from py_COMTAILS (Moreno 2025, A&A 695, A263).")
         return lines
@@ -7380,9 +7802,10 @@ class MCWindow(QDialog):
             self.sp_v0.value(), self.sp_gamma.value(), self.sp_mexp.value(), seed,
             qt_weights=qt_weights, active_area=active_area, rho_g_cm3=self.sp_rho.value(),
             sunward=sunward, sunward_expocos=self.sp_sunward_expocos.value(),
-            sunward_reference=("emission" if self.cmb_sunward_reference.currentIndex() == 0 else "observation"),
+            sunward_reference="emission",
             sunward_cone_half_angle_deg=self.sp_sunward_cone.value(),
-            require_projected_sunward=self.chk_projected_sunward.isChecked(),
+            require_projected_sunward=(self.grp_projection_diag.isChecked() and
+                                         self.chk_projected_sunward.isChecked()),
             phase_law=("linear_exponential" if self.cmb_phase_law.currentIndex() == 1 else
                        "none" if self.cmb_phase_law.currentIndex() == 2 else "schleicher"),
             phase_linear_beta=self.sp_phase_beta.value(),
@@ -7390,9 +7813,24 @@ class MCWindow(QDialog):
             phase_linear_w_oe=self.sp_phase_woe.value(),
             size_dist_table=size_dist_table, p_v=self.sp_pv.value(),
             grid_npix=self._grid_npix)
-        self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(self._on_done)
-        self._worker.error.connect(self._on_error)
+        self._run_generation += 1
+        run_generation = self._run_generation
+
+        def _mc_progress(pct, message, generation=run_generation):
+            if generation == self._run_generation:
+                self._on_progress(pct, message)
+
+        def _mc_done(result, generation=run_generation):
+            if generation == self._run_generation:
+                self._on_done(result)
+
+        def _mc_error(message, generation=run_generation):
+            if generation == self._run_generation:
+                self._on_error(message)
+
+        self._worker.progress.connect(_mc_progress)
+        self._worker.finished.connect(_mc_done)
+        self._worker.error.connect(_mc_error)
         self._worker.start()
 
     def _read_anchor_table(self) -> list:
@@ -7524,6 +7962,7 @@ class MCWindow(QDialog):
 
     def _on_done(self, result: dict):
         self._mc_result = result
+        self._mark_guided_setup_complete()
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
         self.progress.setFormat("100%")
@@ -7984,7 +8423,7 @@ class DustProductionDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("☄ Comet Tail Analyzer  —  Finson–Probstein Model  ·  v3.1")
+        self.setWindowTitle("☄ Comet Tail Analyzer  —  Finson–Probstein Model  ·  v3.1.1")
         # Keep a practical lower bound for compact laptop displays, while
         # opening maximized at startup (see main()). The left and right
         # panels are scrollable, so a 960 px-wide workspace remains usable.
@@ -7995,6 +8434,12 @@ class MainWindow(QMainWindow):
         self._model    = None
         self._comet_el = None
         self._worker   = None
+        # Visibility before MC auto-hides F-P curves; restored by Clear All.
+        self._pre_mc_fp_visibility = None
+        # Incremented whenever results are cleared.  Async callbacks captured
+        # before the increment are ignored so a late worker cannot repopulate
+        # a canvas that the user has explicitly cleared.
+        self._model_generation = 0
         self._cobs_data     = None
         self._cobs_data_for = None # comet name self._cobs_data was fetched for
         self._pending_cobs_callback  = None
@@ -8039,32 +8484,16 @@ class MainWindow(QMainWindow):
     def _build_menu(self):
         mb = self.menuBar()
 
-        # File
+        # File — opening, saving, exporting, and application lifecycle only.
         file_m = mb.addMenu("File")
 
-        # Standard file-opening shortcut: open the image setup dialog,
-        # where the user can choose FITS/PNG/JPEG and configure the overlay.
         act_image_setup = QAction("Open / Setup Image…", self)
         act_image_setup.setShortcut("Ctrl+O")
         act_image_setup.setToolTip(
             "Open the Image Setup & Calibration dialog to load or configure "
             "the observed image overlay.")
-        act_image_setup.triggered.connect(
-            lambda: self.ctrl._open_image_dialog())
+        act_image_setup.triggered.connect(lambda: self.ctrl._open_image_dialog())
         file_m.addAction(act_image_setup)
-
-        # Run the normal F-P workflow from anywhere in the main window.
-        # This delegates to the existing COMPUTE MODEL button, preserving
-        # all current validation, progress handling, and worker-thread logic.
-        self._act_run_fp = QAction("▶  Run F-P Model", self)
-        self._act_run_fp.setShortcut("F5")
-        self._act_run_fp.setToolTip(
-            "Run the Finson–Probstein model using the current inputs "
-            "(same action as COMPUTE MODEL).")
-        self._act_run_fp.setStatusTip(
-            "Run the Finson–Probstein model with the current inputs (F5).")
-        self._act_run_fp.triggered.connect(self._run_fp_model_from_menu)
-        file_m.addAction(self._act_run_fp)
         file_m.addSeparator()
 
         act_save_png = QAction("Save plot as PNG…", self)
@@ -8076,22 +8505,75 @@ class MainWindow(QMainWindow):
         file_m.addAction(act_save_png)
         file_m.addAction(act_export_csv)
         file_m.addSeparator()
+
         act_quit = QAction("Quit", self)
         act_quit.setShortcut("Ctrl+Q")
         act_quit.triggered.connect(self.close)
         file_m.addAction(act_quit)
 
-        # View
+        # Model — every action that creates, refines, or clears a model result.
+        model_m = mb.addMenu("Model")
+
+        self._act_run_fp = QAction("▶  Run Finson–Probstein Model", self)
+        self._act_run_fp.setShortcut("F5")
+        self._act_run_fp.setToolTip(
+            "Run the Finson–Probstein model using the current inputs "
+            "(same action as COMPUTE MODEL).")
+        self._act_run_fp.setStatusTip(
+            "Run the Finson–Probstein model with the current inputs (F5).")
+        self._act_run_fp.triggered.connect(self._run_fp_model_from_menu)
+        model_m.addAction(self._act_run_fp)
+
+        self._act_open_mc = QAction("🎲  Open Monte Carlo Model…", self)
+        self._act_open_mc.setShortcut("F6")
+        self._act_open_mc.setToolTip(
+            "Open the Monte Carlo setup window. F6 opens the inputs; it does "
+            "not start a long particle simulation automatically.")
+        self._act_open_mc.setStatusTip("Open Monte Carlo morphology setup (F6).")
+        self._act_open_mc.triggered.connect(self._open_mc_window)
+        model_m.addAction(self._act_open_mc)
+
+        self._act_reextract_mc = QAction("↻  Re-extract MC Contours", self)
+        self._act_reextract_mc.setToolTip(
+            "Rebuild contour paths from the cached MC density grid without "
+            "resampling or propagating particles.")
+        self._act_reextract_mc.setEnabled(False)
+        self._act_reextract_mc.triggered.connect(self._reextract_mc_from_menu)
+        model_m.addAction(self._act_reextract_mc)
+
+        model_m.addSeparator()
+        self._act_clear_mc = QAction("✕  Clear All Models", self)
+        self._act_clear_mc.setToolTip(
+            "Remove F-P and MC results, restore the zero-ejection F-P baseline, "
+            "and preserve the loaded image and editable MC inputs.")
+        self._act_clear_mc.setEnabled(False)
+        self._act_clear_mc.triggered.connect(self._confirm_clear_all_models)
+        model_m.addAction(self._act_clear_mc)
+
+        # Compact main-window model toolbar for discoverability.
+        self._model_toolbar = QToolBar("Model", self)
+        self._model_toolbar.setObjectName("ModelToolbar")
+        self._model_toolbar.setMovable(False)
+        self._model_toolbar.setFloatable(False)
+        self._model_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._model_toolbar.addAction(self._act_run_fp)
+        self._model_toolbar.addAction(self._act_open_mc)
+        self._model_toolbar.addSeparator()
+        self._model_toolbar.addAction(self._act_clear_mc)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._model_toolbar)
+
+        # View — visualization windows and appearance only.
         view_m = mb.addMenu("View")
         act_reset = QAction("Reset zoom", self)
         act_reset.triggered.connect(lambda: self.canvas.canvas.toolbar.home())
         view_m.addAction(act_reset)
         view_m.addSeparator()
+
         act_orbit_view = QAction("🪐  Orbit position diagram…", self)
-        # Ctrl+O is reserved for Open / Setup Image (standard File shortcut).
         act_orbit_view.setShortcut("Ctrl+Shift+O")
         act_orbit_view.triggered.connect(self._open_orbit_window)
         view_m.addAction(act_orbit_view)
+
         act_lc_view = QAction("📈  Light curve…", self)
         act_lc_view.setShortcut("Ctrl+L")
         act_lc_view.setToolTip(
@@ -8099,25 +8581,8 @@ class MainWindow(QMainWindow):
             "for the selected comet.")
         act_lc_view.triggered.connect(self._menu_open_lc)
         view_m.addAction(act_lc_view)
-        act_mc_view = QAction("🎲  Monte Carlo morphology…", self)
-        act_mc_view.setToolTip(
-            "Population-level dust model: samples a grain-size distribution "
-            "+ release-time window instead of one syndyne/synchrone curve "
-            "at a time, and bins the result into a density map.")
-        act_mc_view.triggered.connect(self._open_mc_window)
-        view_m.addAction(act_mc_view)
-
-        self._act_clear_mc = QAction("✕  Clear all model results", self)
-        self._act_clear_mc.setShortcut("Ctrl+Shift+M")
-        self._act_clear_mc.setToolTip(
-            "Remove Finson–Probstein and Monte Carlo computed overlays while "
-            "preserving the loaded image, image isophotes, and editable inputs.")
-        self._act_clear_mc.setEnabled(False)
-        self._act_clear_mc.triggered.connect(self._clear_all_models)
-        view_m.addAction(self._act_clear_mc)
         view_m.addSeparator()
 
-        # Theme submenu
         theme_m = view_m.addMenu("🎨  Theme")
         self._act_dark  = QAction("☾  Dark  (Space)",  self, checkable=True)
         self._act_light = QAction("☀  Light (Observatory)", self, checkable=True)
@@ -8127,12 +8592,7 @@ class MainWindow(QMainWindow):
         theme_m.addAction(self._act_dark)
         theme_m.addAction(self._act_light)
 
-        # Calculation (v3.0) — every standalone calculator/computation
-        # action consistently in one menu, mirroring View's "open a view"
-        # role. Each calculator owns its own physical-parameter inputs
-        # directly (ρ_d in Dust particle radius…, v_dust/p_v in Dust
-        # production rate…) rather than a separate combined dialog, so
-        # there's nothing else to put here first.
+        # Calculation — standalone physical calculators.
         calc_m = mb.addMenu("Calculation")
         act_radius = QAction("🪨  Dust particle radius…", self)
         act_radius.setToolTip(
@@ -8140,6 +8600,7 @@ class MainWindow(QMainWindow):
             "comet/model required.")
         act_radius.triggered.connect(self._open_grain_radius_dialog)
         calc_m.addAction(act_radius)
+
         act_qd = QAction("💨  Dust production rate…", self)
         act_qd.setToolTip(
             "Afρ → Q_d calculator. r_h comes from the selected comet's "
@@ -8775,20 +9236,31 @@ class MainWindow(QMainWindow):
         self._act_run_fp.setEnabled(False)
         self.status.showMessage("Computing Finson–Probstein model…")
 
+        self._model_generation += 1
+        generation = self._model_generation
         worker = ComputeWorker(comet_el, obs_jd, betas, ages,
                                self.ctrl.max_age.value(), self.ctrl.n_pts.value(),
                                ejection=ejection)
         self._worker = worker   # keep a reference, same as _on_compute() does
 
-        def _done(model):
+        def _done(model, expected=generation):
+            if expected != self._model_generation:
+                return
             self._on_model_ready(model, betas, ov)
             callback()
 
-        worker.progress.connect(
-            lambda v, msg: (self.ctrl.progress_bar.setValue(v),
-                            self.status.showMessage(msg)))
+        def _progress(v, msg, expected=generation):
+            if expected == self._model_generation:
+                self.ctrl.progress_bar.setValue(v)
+                self.status.showMessage(msg)
+
+        def _error(msg, expected=generation):
+            if expected == self._model_generation:
+                self._on_compute_error(msg)
+
+        worker.progress.connect(_progress)
         worker.finished.connect(_done)
-        worker.error.connect(self._on_compute_error)
+        worker.error.connect(_error)
         worker.start()
 
     def set_mc_contours(self, paths, info=None):
@@ -8836,6 +9308,10 @@ class MainWindow(QMainWindow):
         # updated visibly; users may turn either layer back on manually afterward.
         if paths:
             try:
+                if self._pre_mc_fp_visibility is None:
+                    self._pre_mc_fp_visibility = (
+                        self.ctrl.chk_synd.isChecked(),
+                        self.ctrl.chk_sync.isChecked())
                 self.ctrl.chk_synd.setChecked(False)
                 self.ctrl.chk_sync.setChecked(False)
             except Exception:
@@ -8854,78 +9330,151 @@ class MainWindow(QMainWindow):
             ov = self.ctrl.get_overlay()
             self.canvas.draw_model(
                 self._model, ov["img_arr"] if self.ctrl._img_arr is not None else None)
+        try:
+            self._act_reextract_mc.setEnabled(bool(paths) and
+                getattr(getattr(self, "_mc_win", None), "_mc_result", None) is not None)
+        except Exception:
+            pass
         self.status.showMessage(
             f"Monte Carlo contour ({len(paths)} path segment(s)) shown on main canvas.", 5000)
 
+    def _reextract_mc_from_menu(self):
+        """Re-extract contours from the open MC window's cached density grid."""
+        win = getattr(self, "_mc_win", None)
+        if win is None or getattr(win, "_mc_result", None) is None:
+            QMessageBox.information(
+                self, "Re-extract MC Contours",
+                "No cached Monte Carlo density grid is available.\n\n"
+                "Open the Monte Carlo window and run the model first.")
+            self._act_reextract_mc.setEnabled(False)
+            return
+        try:
+            win.show()
+            win.raise_()
+            win.activateWindow()
+            win._reextract_contours()
+        except RuntimeError:
+            self._mc_win = None
+            self._act_reextract_mc.setEnabled(False)
+
+    def _confirm_clear_all_models(self):
+        """Ask before clearing displayed results; saved files remain untouched."""
+        has_result = bool(self._model is not None or self.canvas._model is not None or
+                          self.canvas.mc_contours or self.canvas.mc_info)
+        if not has_result:
+            self.status.showMessage("No computed model is currently displayed.", 4000)
+            return
+        answer = QMessageBox.question(
+            self, "Clear All Models",
+            "Clear all Finson–Probstein and Monte Carlo results?\n\n"
+            "This also resets the active F-P ejection velocity to zero. "
+            "The loaded image, editable MC inputs, and saved .mcin files are preserved.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if answer == QMessageBox.StandardButton.Yes:
+            self._clear_all_models()
+
     def _clear_all_models(self):
-        """Clear every computed model result while preserving user inputs.
+        """Clear all computed results and return F-P to a clean baseline.
 
-        Removed from the main canvas:
-          * Finson–Probstein syndynes, synchrones, orbital path and vectors
-          * Monte Carlo morphology contours and the MC parameter box
-
-        Preserved:
-          * loaded image and image-derived isophotes
-          * F-P and MC editable input values
-          * saved/loadable input state
-
-        This distinction matters because an MC velocity choice can update the
-        main F-P ejection-velocity setting. Clearing only the MC contour could
-        therefore leave an F-P result computed with the MC assumptions on the
-        canvas.
+        Editable MC fields remain available in the MC window/.mcin workflow,
+        but hidden state that can silently alter a later F-P result is reset:
+        the MC-coupled ejection velocity, contour-only presentation mode, and
+        auto-hidden F-P visibility.
         """
         had_fp = bool(self._model is not None or self.canvas._model is not None)
         had_mc = bool(self.canvas.mc_contours or self.canvas.mc_info)
 
-        # Clear the computed Finson–Probstein result in both the main-window
-        # cache and the canvas cache. Inputs in ControlPanel are untouched.
+        # Invalidate any result callback that was already in flight when the
+        # user pressed Clear.  QThread computation may finish in the background,
+        # but its captured generation no longer matches and it is ignored.
+        self._model_generation += 1
+        try:
+            if self._worker is not None and self._worker.isRunning():
+                self._worker.requestInterruption()
+        except Exception:
+            pass
+
         self._model = None
         self.canvas._model = None
-
-        # Clear the computed Monte Carlo result.
         self.canvas.mc_contours = []
         self.canvas.mc_info = None
         self.ctrl._mc_contour_visible = False
 
-        # Prevent an already-open MC window from restoring its old density
-        # result through a display/threshold refresh. Keep all editable inputs.
+        # MC Run writes its velocity law into a hidden main-panel state so F-P
+        # and MC are physically synchronized.  That state must not survive an
+        # explicit Clear All command; otherwise the next F-P model silently
+        # remains a non-zero-velocity model.
+        self.ctrl.reset_ejection_params()
+
+        # Restore the user's pre-MC F-P visibility.  If no snapshot exists,
+        # use the normal diagnostic defaults.
+        try:
+            if self._pre_mc_fp_visibility is not None:
+                show_synd, show_sync = self._pre_mc_fp_visibility
+            else:
+                show_synd, show_sync = True, True
+            self.ctrl.chk_synd.setChecked(bool(show_synd))
+            self.ctrl.chk_sync.setChecked(bool(show_sync))
+        except Exception:
+            pass
+        self._pre_mc_fp_visibility = None
+
+        # Publication/contour-only modes belong to an MC comparison.  Reset to
+        # Analysis Overlay so the next standalone F-P computation is visible.
+        self.ctrl.reset_mc_presentation()
+
         mc_win = getattr(self, "_mc_win", None)
         if mc_win is not None:
             try:
                 mc_win._mc_result = None
+                mc_win._run_generation = getattr(mc_win, "_run_generation", 0) + 1
+                if mc_win._worker is not None and mc_win._worker.isRunning():
+                    mc_win._worker.requestInterruption()
+                mc_win.btn_reextract.setEnabled(False)
+                mc_win.progress.setRange(0, 100)
+                mc_win.progress.setValue(0)
+                mc_win.progress.setFormat("0%")
+                # Keep the open dialog consistent with the main-canvas reset.
+                idx = mc_win.cmb_mc_view_style.findData("analysis")
+                if idx >= 0:
+                    mc_win.cmb_mc_view_style.setCurrentIndex(idx)
                 mc_win.lbl_status.setText(
-                    "All model results cleared; editable inputs preserved.")
+                    "All model results cleared; F-P reset to zero ejection velocity.")
             except Exception:
                 pass
 
         try:
             self.ctrl.btn_clear_mc.setEnabled(False)
             self._act_clear_mc.setEnabled(False)
+            self._act_reextract_mc.setEnabled(False)
+            self.ctrl.set_computing(False)
+            self._act_run_fp.setEnabled(True)
         except Exception:
             pass
 
-        # Redraw the observational layer only. Image-derived isophotes remain
-        # visible because draw_image_preview() now honours the current isophote
-        # display settings.
+        # Redraw observation only.  Model-derived contours and annotations are
+        # absent; image-derived isophotes remain governed by the main checkbox.
         self.canvas._vis = self.ctrl.get_vis()
         if self.ctrl._img_arr is not None:
-            self.canvas.nuc_x = self.ctrl.get_overlay().get("nuc_x", self.canvas.nuc_x)
-            self.canvas.nuc_y = self.ctrl.get_overlay().get("nuc_y", self.canvas.nuc_y)
-            self.canvas.north_pa = self.ctrl.get_overlay().get("north_pa", self.canvas.north_pa)
+            ov = self.ctrl.get_overlay()
+            self.canvas.nuc_x = ov.get("nuc_x", self.canvas.nuc_x)
+            self.canvas.nuc_y = ov.get("nuc_y", self.canvas.nuc_y)
+            self.canvas.north_pa = ov.get("north_pa", self.canvas.north_pa)
             self.canvas.draw_image_preview(self.ctrl._img_arr)
         else:
             self.canvas._imgArr = None
             self.canvas._draw_empty()
 
         if had_fp and had_mc:
-            msg = "Finson–Probstein and Monte Carlo models cleared; inputs preserved."
+            msg = "F-P and MC models cleared; F-P reset to zero ejection velocity."
         elif had_fp:
-            msg = "Finson–Probstein model cleared; inputs preserved."
+            msg = "F-P model cleared; zero-ejection baseline restored."
         elif had_mc:
-            msg = "Monte Carlo model cleared; inputs preserved."
+            msg = "MC model cleared; zero-ejection F-P baseline restored."
         else:
             msg = "No computed model is currently displayed."
-        self.status.showMessage(msg, 5000)
+        self.status.showMessage(msg, 6000)
 
     # Backward-compatible internal alias for any older signal wiring.
     def _clear_mc_model(self):
@@ -8948,13 +9497,27 @@ class MainWindow(QMainWindow):
         self._act_run_fp.setEnabled(False)
         self.status.showMessage("Computing Finson–Probstein model…")
 
+        self._model_generation += 1
+        generation = self._model_generation
         self._worker = ComputeWorker(comet_el, obs_jd, betas, ages, max_age, n_pts,
                                      ejection=ejection)
-        self._worker.progress.connect(
-            lambda v, msg: (self.ctrl.progress_bar.setValue(v),
-                            self.status.showMessage(msg)))
-        self._worker.finished.connect(lambda m: self._on_model_ready(m, betas, ov))
-        self._worker.error.connect(self._on_compute_error)
+
+        def _progress(v, msg, expected=generation):
+            if expected == self._model_generation:
+                self.ctrl.progress_bar.setValue(v)
+                self.status.showMessage(msg)
+
+        def _done(model, expected=generation):
+            if expected == self._model_generation:
+                self._on_model_ready(model, betas, ov)
+
+        def _error(msg, expected=generation):
+            if expected == self._model_generation:
+                self._on_compute_error(msg)
+
+        self._worker.progress.connect(_progress)
+        self._worker.finished.connect(_done)
+        self._worker.error.connect(_error)
         self._worker.start()
 
     def _on_model_ready(self, model, betas, ov):
@@ -9222,7 +9785,7 @@ class MainWindow(QMainWindow):
 
     def _open_mc_window(self):
         # Keep one editable MC window per main-window session.  Repeated clicks
-        # on View → Monte Carlo Morphology should reveal/raise the existing
+        # on Model → Open Monte Carlo Model should reveal/raise the existing
         # window instead of creating another copy with diverging inputs.
         existing = getattr(self, '_mc_win', None)
         if existing is not None:
@@ -9270,6 +9833,10 @@ class MainWindow(QMainWindow):
         def _forget_mc_window(*_args, _win=win):
             if getattr(self, '_mc_win', None) is _win:
                 self._mc_win = None
+                try:
+                    self._act_reextract_mc.setEnabled(False)
+                except Exception:
+                    pass
         win.destroyed.connect(_forget_mc_window)
 
         win.show()
@@ -9309,21 +9876,9 @@ class MainWindow(QMainWindow):
                         w.writerow(["synchrone",s["age"],f"{xi:.8f}",f"{eta:.8f}"])
         self.status.showMessage(f"CSV exported → {path}", 4000)
 
-    # ── Update check (v3.1) ──────────────────────────────────────────────
-    # GitHub Releases-based update notification. Two entry points:
-    #   _check_for_update_silent() — fired once 3s after startup (see
-    #       __init__). Completely silent unless there's a genuine newer
-    #       release AND the user hasn't already dismissed that exact
-    #       version via "Skip this version" (remembered in QSettings).
-    #   _check_for_update_manual() — Help > Check for Updates…, always
-    #       gives feedback either way ("up to date" or the update dialog),
-    #       ignoring any previously-skipped version since this is an
-    #       explicit user action.
-    # Both run cta.check_for_update() in UpdateCheckWorker (background
-    # thread) — it never raises and never blocks the UI; see that
-    # function's docstring for the full list of silent-failure cases
-    # (no network, GitHub's 60 req/hr unauthenticated rate limit, no
-    # releases yet, already current).
+    # ── Update check (v3.1.1) ────────────────────────────────────────────
+    # Startup checks stay silent unless a genuine newer stable release exists.
+    # Manual checks distinguish "current" from a network/API/SSL failure.
     def _update_settings(self) -> QSettings:
         return QSettings("MPC-O58", "CometTailAnalyzer")
 
@@ -9335,15 +9890,16 @@ class MainWindow(QMainWindow):
         self._update_worker.start()
 
     def _on_update_check_silent(self, info: dict | None):
-        if not info:
-            return   # up to date, offline, or rate-limited — say nothing
+        if not isinstance(info, dict) or info.get("status") != "update":
+            return
         skipped = self._update_settings().value("skipped_update_version", "")
-        if skipped == info["latest"]:
-            return   # user already dismissed this exact version
+        if skipped == info.get("latest", ""):
+            return
         self._show_update_dialog(info, manual=False)
 
     def _check_for_update_manual(self):
         if self._update_worker is not None and self._update_worker.isRunning():
+            self.status.showMessage("An update check is already in progress.", 3000)
             return
         self.status.showMessage("Checking for updates…")
         self._update_worker = UpdateCheckWorker()
@@ -9351,16 +9907,36 @@ class MainWindow(QMainWindow):
         self._update_worker.start()
 
     def _on_update_check_manual(self, info: dict | None):
-        if info:
+        self.status.showMessage("", 0)
+        if not isinstance(info, dict):
+            info = {"status": "error", "reason": "No response from the update service."}
+
+        status = info.get("status")
+        if status == "update":
             self._show_update_dialog(info, manual=True)
-        else:
-            self.status.showMessage("", 0)
+            return
+        if status == "current":
+            latest = info.get("tag") or info.get("latest") or cta.__version__
             QMessageBox.information(
                 self, "Check for Updates",
-                f"You're up to date.\n\n"
+                f"Comet Tail Analyzer is up to date.\n\n"
                 f"Installed version: {cta.__version__}\n"
-                f"(Could also mean: offline, or GitHub's rate limit was hit — "
-                f"try again in a few minutes.)")
+                f"Latest stable release: {latest}")
+            return
+
+        reason = info.get("reason") or "The GitHub Releases service could not be reached."
+        box = QMessageBox(self)
+        box.setWindowTitle("Unable to Check for Updates")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText("CTA could not verify the latest release.")
+        box.setInformativeText(
+            f"{reason}\n\nInstalled version: {cta.__version__}\n"
+            "The application can continue to be used normally.")
+        btn_open = box.addButton("Open Releases Page", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Close", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is btn_open:
+            webbrowser.open(f"https://github.com/{cta.GITHUB_REPO}/releases/latest")
 
     def _show_update_dialog(self, info: dict, manual: bool):
         box = QMessageBox(self)
@@ -9408,7 +9984,7 @@ class MainWindow(QMainWindow):
             "COMET TAIL ANALYZER</div>"
             "<div style='font-size:10px;color:#2a5070;letter-spacing:3px;margin-top:4px'>"
             "FINSON–PROBSTEIN DUST TAIL MODEL  ·  1968</div>"
-            "<div style='font-size:11px;color:#3a6090;margin-top:8px'>Version 3.1  ·  2026</div>"
+            "<div style='font-size:11px;color:#3a6090;margin-top:8px'>Version 3.1.1  ·  2026</div>"
             "</div>")
         vb.addWidget(banner)
 
